@@ -63,6 +63,18 @@
         "authentication": "ON_INSTALL"
       },
       "category": "Security"
+    },
+    {
+      "name": "ai-infra-mod",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ai-infra-mod"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
     }
   ]
 }

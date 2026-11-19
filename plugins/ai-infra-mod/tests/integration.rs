@@ -1,0 +1,590 @@
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeSet,
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
+use tempfile::tempdir;
+
+fn mod_bin() -> &'static str {
+    env!("CARGO_BIN_EXE_ai-infra-mod")
+}
+
+fn staged_bin_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin")
+}
+
+fn init_git_repo(dir: &Path) {
+    for args in [
+        &["init"][..],
+        &["config", "user.name", "Tester"][..],
+        &["config", "user.email", "tester@example.com"][..],
+    ] {
+        let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+        assert!(out.status.success(), "{:?}", out);
+    }
+    std::fs::write(dir.join("README.md"), "# Demo Repo\n").unwrap();
+    for args in [&["add", "."][..], &["commit", "-m", "init"][..]] {
+        let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+        assert!(out.status.success(), "{:?}", out);
+    }
+}
+
+fn rpc(stdin: &mut impl Write, reader: &mut impl BufRead, req: Value) -> Value {
+    writeln!(stdin, "{req}").unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    serde_json::from_str(&line).unwrap()
+}
+
+#[test]
+fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
+    let tmp = tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_git_repo(&repo);
+
+    // Create a valid minimal skill inside repo so skill_validate has a real target.
+    let skill_dir = repo.join("demo-skill");
+    std::fs::create_dir(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: demo-skill\ndescription: Inspect repository layout cleanly.\n---\n\n# Demo Skill\n",
+    )
+    .unwrap();
+
+    let mut mcp = Command::new(mod_bin())
+        .arg("mcp")
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = mcp.stdin.take().unwrap();
+    let mut stdout = BufReader::new(mcp.stdout.take().unwrap());
+
+    let init = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": { "protocolVersion": "2025-06-18", "capabilities": {} }
+        }),
+    );
+    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+    writeln!(
+        stdin,
+        "{}",
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    let list = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }),
+    );
+    let tools = list["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 56, "expected 55 backend tools + mod_status");
+    let names: BTreeSet<String> = tools
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names.len(), 56);
+    for t in tools {
+        let ann = &t["annotations"];
+        assert!(
+            ann["readOnlyHint"].is_boolean() && ann["destructiveHint"].is_boolean(),
+            "missing annotations on {}",
+            t["name"]
+        );
+    }
+
+    // 1. Meta tool `mod_status`
+    let st = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": { "name": "mod_status", "arguments": { "project": repo } }
+        }),
+    );
+    assert_eq!(st["result"]["isError"], false, "{st}");
+    assert_eq!(st["result"]["structuredContent"]["total_tools"], 56);
+
+    // 2. graph-map (`graph_status`)
+    let gr = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": { "name": "graph_status", "arguments": { "project": repo } }
+        }),
+    );
+    assert_eq!(gr["result"]["isError"], false, "{gr}");
+
+    // 3. system-orchestration (`orch_working_memory_write` + `orch_working_memory_read`)
+    let wm_w = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "orch_working_memory_write",
+                "arguments": { "project": repo, "scope_id": "s1", "key": "k1", "text": "hello mod" }
+            }
+        }),
+    );
+    assert_eq!(wm_w["result"]["isError"], false, "{wm_w}");
+    let wm_r = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "orch_working_memory_read",
+                "arguments": { "project": repo, "scope_id": "s1" }
+            }
+        }),
+    );
+    assert_eq!(wm_r["result"]["isError"], false, "{wm_r}");
+
+    // 4. context-graph (`memory_status`)
+    let mem = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": { "name": "memory_status", "arguments": { "project": repo } }
+        }),
+    );
+    assert_eq!(mem["result"]["isError"], false, "{mem}");
+
+    // 5. skill-foundry (`skill_validate`)
+    let sk = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": { "name": "skill_validate", "arguments": { "path": skill_dir } }
+        }),
+    );
+    assert_eq!(sk["result"]["isError"], false, "{sk}");
+
+    // 6. agent-guardrails (`guardrails_check_command`)
+    let grd_ok = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": { "name": "guardrails_check_command", "arguments": { "root": repo, "command": "git status" } }
+        }),
+    );
+    assert_eq!(grd_ok["result"]["isError"], false, "{grd_ok}");
+
+    drop(stdin);
+    assert!(mcp.wait().unwrap().success());
+}
+
+#[test]
+fn mcp_restrict_root_injects_root_and_blocks_path_escapes_from_plugin_cwd() {
+    let tmp = tempdir().unwrap();
+    let repo = tmp.path().join("allowed-repo");
+    let outside = tmp.path().join("outside-secret");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    init_git_repo(&repo);
+
+    let skill_dir = repo.join("my-skill");
+    std::fs::create_dir(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: my-skill\ndescription: Valid test skill.\n---\n",
+    )
+    .unwrap();
+    let out_skill = outside.join("evil-skill");
+    std::fs::create_dir(&out_skill).unwrap();
+    std::fs::write(
+        out_skill.join("SKILL.md"),
+        "---\nname: evil-skill\ndescription: Outside test skill.\n---\n",
+    )
+    .unwrap();
+
+    // Run with cwd inside plugin root, simulating MCPB / Codex `cwd: "."`.
+    let mut mcp = Command::new(mod_bin())
+        .arg("mcp")
+        .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .env("AI_INFRA_ROOT", &repo)
+        .env("AI_INFRA_RESTRICT_ROOT", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = mcp.stdin.take().unwrap();
+    let mut stdout = BufReader::new(mcp.stdout.take().unwrap());
+
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": { "protocolVersion": "2025-06-18", "capabilities": {} }
+        }),
+    );
+    writeln!(
+        stdin,
+        "{}",
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    // Omitted `project`/`root` auto-injects AI_INFRA_ROOT cleanly!
+    let status = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "mod_status", "arguments": {} } }),
+    );
+    assert_eq!(status["result"]["isError"], false, "{status}");
+    assert_eq!(
+        status["result"]["structuredContent"]["restricted_mode"],
+        true
+    );
+
+    let mem = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "memory_status", "arguments": {} } }),
+    );
+    assert_eq!(mem["result"]["isError"], false, "{mem}");
+
+    // Relative subpath inside AI_INFRA_ROOT succeeds even when server cwd is plugin root!
+    let rel_ok = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": { "name": "skill_validate", "arguments": { "path": "my-skill" } }
+        }),
+    );
+    assert_eq!(rel_ok["result"]["isError"], false, "{rel_ok}");
+
+    let outside_json = outside.join("outside.json");
+    std::fs::write(&outside_json, "{}").unwrap();
+
+    // Path escapes (traversal `..`, absolute sibling, or external project/import/ceiling/sources/merge_from) MUST fail!
+    for (id, tool, args) in [
+        (5, "skill_validate", json!({ "path": "../outside-secret/evil-skill" })),
+        (6, "skill_validate", json!({ "path": out_skill })),
+        (7, "graph_status", json!({ "project": outside })),
+        (8, "orch_working_memory_read", json!({ "project": outside, "scope_id": "x" })),
+        (9, "context_export_bundle", json!({ "destination": "../escaped.cgb.zip" })),
+        (10, "graph_build", json!({ "import": outside_json })),
+        (11, "graph_build", json!({ "import": "../outside-secret/outside.json" })),
+        (12, "skill_budget_check", json!({ "path": "my-skill", "ceiling": outside_json })),
+        (13, "memory_source_fingerprints", json!({ "sources": ["../outside-secret/outside.json"] })),
+        (14, "context_handoff_save", json!({ "goal": "g", "summary": "s", "next_steps": ["n"], "files": [outside_json], "merge_from": ["../outside-secret/h.md"] })),
+        (15, "skill_cost_audit", json!({ "claude_dir": outside })),
+    ] {
+        let resp = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": { "name": tool, "arguments": args }
+            }),
+        );
+        assert_eq!(resp["result"]["isError"], true, "{tool}: {resp}");
+        assert!(
+            resp["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("AI_INFRA_RESTRICT_ROOT"),
+            "{resp}"
+        );
+    }
+
+    drop(stdin);
+    assert!(mcp.wait().unwrap().success());
+}
+
+#[test]
+fn mcp_negotiates_roots_list_and_guards_plugin_cwd_without_roots() {
+    let tmp = tempdir().unwrap();
+    let ancestor = tmp.path().join("marketplace");
+    std::fs::create_dir(&ancestor).unwrap();
+    init_git_repo(&ancestor);
+    let plugin = ancestor.join("plugins").join("ai-infra-mod");
+    std::fs::create_dir_all(plugin.join(".codex-plugin")).unwrap();
+    std::fs::create_dir_all(plugin.join("bin")).unwrap();
+    std::fs::write(plugin.join("bin/ai-infra-mod"), "").unwrap();
+
+    // Case A: Client without roots inside plugin cwd -> must refuse omitted/dot project/root!
+    {
+        let mut mcp = Command::new(mod_bin())
+            .arg("mcp")
+            .current_dir(&plugin)
+            .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+            .env_remove("AI_INFRA_ROOT")
+            .env_remove("ROOT_DIR")
+            .env_remove("AI_INFRA_RESTRICT_ROOT")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = mcp.stdin.take().unwrap();
+        let mut stdout = BufReader::new(mcp.stdout.take().unwrap());
+
+        let _ = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "capabilities": {} } }),
+        );
+        writeln!(
+            stdin,
+            "{}",
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+        )
+        .unwrap();
+        stdin.flush().unwrap();
+
+        for (id, tool, args) in [
+            (2, "graph_status", json!({})),
+            (3, "graph_status", json!({ "project": "." })),
+            (4, "memory_status", json!({})),
+            (5, "orch_working_memory_read", json!({ "scope_id": "x" })),
+        ] {
+            let resp = rpc(
+                &mut stdin,
+                &mut stdout,
+                json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": tool, "arguments": args } }),
+            );
+            assert_eq!(resp["result"]["isError"], true, "{tool}: {resp}");
+        }
+        drop(stdin);
+        assert!(mcp.wait().unwrap().success());
+    }
+
+    // Case B: Client advertises `capabilities.roots`, responds to `roots/list` -> auto-injects negotiated root!
+    {
+        let target = tmp.path().join("target-repo");
+        std::fs::create_dir(&target).unwrap();
+        init_git_repo(&target);
+
+        let mut mcp = Command::new(mod_bin())
+            .arg("mcp")
+            .current_dir(&plugin)
+            .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+            .env_remove("AI_INFRA_ROOT")
+            .env_remove("ROOT_DIR")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = mcp.stdin.take().unwrap();
+        let mut stdout = BufReader::new(mcp.stdout.take().unwrap());
+
+        let _ = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": { "roots": { "listChanged": true } }
+                }
+            }),
+        );
+        writeln!(
+            stdin,
+            "{}",
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+        )
+        .unwrap();
+        stdin.flush().unwrap();
+
+        // Read server->client `roots/list` request and respond!
+        let mut req_line = String::new();
+        stdout.read_line(&mut req_line).unwrap();
+        let roots_req: Value = serde_json::from_str(&req_line).unwrap();
+        assert_eq!(roots_req["method"], "roots/list");
+        writeln!(
+            stdin,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": roots_req["id"],
+                "result": {
+                    "roots": [{ "uri": format!("file://{}", target.display()), "name": "target-repo" }]
+                }
+            })
+        )
+        .unwrap();
+        stdin.flush().unwrap();
+
+        let status = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "mod_status", "arguments": {} } }),
+        );
+        assert_eq!(status["result"]["isError"], false, "{status}");
+        assert_eq!(
+            status["result"]["structuredContent"]["workspace"]["path"],
+            target.to_string_lossy().as_ref()
+        );
+        drop(stdin);
+        assert!(mcp.wait().unwrap().success());
+    }
+}
+
+#[test]
+fn hooks_and_cli_status_and_passthrough_work_end_to_end() {
+    let tmp = tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_git_repo(&repo);
+
+    // `hook pre-bash` blocks `rm -rf /` with exit 2 and allows `git status` with exit 0.
+    let mut blk = Command::new(mod_bin())
+        .args(["hook", "claude", "pre-bash"])
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    blk.stdin
+        .take()
+        .unwrap()
+        .write_all(
+            json!({ "cwd": repo, "tool_name": "Bash", "tool_input": { "command": "rm -rf /" } })
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+    let blk_out = blk.wait_with_output().unwrap();
+    assert_eq!(blk_out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&blk_out.stderr).contains("BLOCKED"));
+
+    let mut allow = Command::new(mod_bin())
+        .args(["hook", "codex", "pre-bash"])
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    allow
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            json!({ "cwd": repo, "tool_name": "Bash", "tool_input": { "command": "git status" } })
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+    let allow_out = allow.wait_with_output().unwrap();
+    assert_eq!(allow_out.status.code(), Some(0));
+
+    // `hook claude session-start` runs both context-graph hooks and merges cleanly (fail-open).
+    let mut ss = Command::new(mod_bin())
+        .args(["hook", "claude", "session-start"])
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    ss.stdin
+        .take()
+        .unwrap()
+        .write_all(
+            json!({ "cwd": repo, "hook_event_name": "SessionStart" })
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+    let ss_out = ss.wait_with_output().unwrap();
+    assert_eq!(ss_out.status.code(), Some(0));
+
+    // `hook claude pre-subagent`, `post-subagent`, `subagent-stop` work fail-open cleanly.
+    for role in ["pre-subagent", "post-subagent", "subagent-stop", "user-prompt", "stop"] {
+        let mut h = Command::new(mod_bin())
+            .args(["hook", "claude", role])
+            .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        h.stdin
+            .take()
+            .unwrap()
+            .write_all(json!({ "cwd": repo }).to_string().as_bytes())
+            .unwrap();
+        let out = h.wait_with_output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "hook `{role}` failed");
+    }
+
+    // `status --project <repo> --json`
+    let st = Command::new(mod_bin())
+        .args(["status", "--project"])
+        .arg(&repo)
+        .arg("--json")
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .output()
+        .unwrap();
+    assert!(st.status.success());
+    let st_json: Value = serde_json::from_slice(&st.stdout).unwrap();
+    assert_eq!(st_json["backends"].as_array().unwrap().len(), 5);
+    assert!(
+        st_json["backends"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|b| b["available"] == true)
+    );
+
+    // Passthrough namespaces (`guard`, `graph`, `orch`, `context`, `skill`)
+    let g_blk = Command::new(mod_bin())
+        .args(["guard", "check-command", "rm -rf /"])
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .output()
+        .unwrap();
+    assert_eq!(g_blk.status.code(), Some(2));
+    for ns in ["graph", "orch", "context", "skill", "guard"] {
+        let h = Command::new(mod_bin())
+            .args([ns, "--help"])
+            .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+            .output()
+            .unwrap();
+        assert!(h.status.success(), "{ns} --help failed");
+    }
+}

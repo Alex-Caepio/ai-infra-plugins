@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ai-infra-mod": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/ai-infra-mod",
+      "args": ["mcp"]
+    }
+  }
+}

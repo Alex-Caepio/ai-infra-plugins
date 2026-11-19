@@ -1,8 +1,8 @@
 # Архитектурный анализ извлечения плагинов из `AI-Infrastructure`
 
-> Источник анализа: монорепозиторий `AI-Infrastructure` (проанализирован в режиме strict read-only; рабочее дерево источника осталось нетронутым — `git status --short | wc -l` = `53`).  
-> Целевой dual-compatible marketplace: `./` (<https://github.com/Alex-Caepio/ai-infra-plugins>, ~`53M` на диске без временного build-кэша; проверен на **Claude Code `2.1.278`** и **Codex CLI `0.169.0`**).  
-> Отдельные репозитории плагинов: <https://github.com/Alex-Caepio/graph-map>, <https://github.com/Alex-Caepio/system-orchestration>, <https://github.com/Alex-Caepio/context-graph>, <https://github.com/Alex-Caepio/skill-foundry>, <https://github.com/Alex-Caepio/agent-guardrails>.
+> Источник анализа: монорепозиторий `AI-Infrastructure` (проанализирован в режиме strict read-only; рабочее дерево источника осталось нетронутым — `git status --short | wc -l` = `54` из-за предсуществующего каталога `project-brain/`, не изменявшегося плагинами).  
+> Целевой dual-compatible marketplace: `./` (<https://github.com/Alex-Caepio/ai-infra-plugins>, проверен на **Claude Code `2.1.278`/`2.1.325`**, **Codex CLI `0.169.0`** и **`.mcpb` v0.4**).  
+> Отдельные репозитории плагинов: <https://github.com/Alex-Caepio/ai-infra-mod>, <https://github.com/Alex-Caepio/graph-map>, <https://github.com/Alex-Caepio/system-orchestration>, <https://github.com/Alex-Caepio/context-graph>, <https://github.com/Alex-Caepio/skill-foundry>, <https://github.com/Alex-Caepio/agent-guardrails>.
 
 ---
 
@@ -24,18 +24,19 @@
 
 ---
 
-## 2. Итоговая сводка проверенных плагинов (`623` теста, `55` MCP-инструментов)
+## 2. Итоговая сводка проверенных плагинов (`627` тестов, `56` unified / `55` модульных MCP-инструментов)
 
-Все пять плагинов собраны как автономные Rust-проекты/workspace с предсобранными stripped x86_64 ELF-бинарниками (`bin/`), прошли `cargo test` без единой ошибки и провалидированы live в **Claude Code `2.1.278`** (`claude plugin validate --strict`) и **Codex CLI `0.169.0`** (`codex plugin marketplace add` + `codex plugin add` + `codex app-server`):
+Все шесть плагинов (пять модульных и объединённый пакет `ai-infra-mod` с `.mcpb` Desktop Extension) собраны как автономные Rust-проекты/workspace с предсобранными stripped x86_64 ELF-бинарниками (`bin/`), прошли `cargo test` без единой ошибки и провалидированы live в **Claude Code `2.1.278`/`2.1.325`**, **Codex CLI `0.169.0`** и через **`@anthropic-ai/mcpb` (`manifest_version: "0.4"`)**:
 
-| Плагин | Бинарник (`bin/`, stripped ELF) | Тесты | MCP-инструменты | Навыки / Команды / Хуки | Встроенный UI и защита `plugin-cwd` |
+| Плагин | Бинарник (`bin/`, stripped ELF) | Тесты | MCP-инструменты | Навыки / Команды / Хуки | Встроенный UI, `.mcpb` и защита `plugin-cwd` |
 |---|---|---|---|---|---|
 | **`graph-map`** | `graph-map` (`7.3M`) | `243/243` (`155` core, `84` ui, `4` cli) | `14` | `4` / `3` / — | Скомпилированный и встроенный WASM SVG UI (`924K` `graph_map_ui_bg.wasm`); `cwd`-guard для plugin/cache директорий (`#24`). |
 | **`system-orchestration`** | `orch-engine` (`15M`) | `227/227` (`18` core, `14` host, `25` system, `105` harness, `61` ui, `4` cli) | `18` | `5` / `5` / `3` | Скомпилированный и встроенный WASM Workbench (`2.1M` `orch_ui_bg.wasm`); `cwd`-guard для plugin/cache директорий (`#24`). |
-| **`context-graph`** | `context-graph-engine` (`12M`) | `134/134` (`76`+`42` core, `13` probe, `3` cli) | `11` | `5` / `5` / `6` | Встроенные 6 JSON-схем (`schemas/`); транзакционный SQLite FTS5 + N-hop граф; `cwd`-guard для plugin/cache директорий (`#24`). |
+| **`context-graph`** | `context-graph-engine` (`12M`) | `134/134` (`76`+`42` core, `13` probe, `3` cli) | `11` | `5` / `5` / `6` | Встроенные 6 JSON-схем (`schemas/`); N-hop SQLite граф; исправлен `.claude-plugin/plugin.json` (убраны дублирующие ссылки на `hooks/hooks.json`); `cwd`-guard (`#24`). |
 | **`skill-foundry`** | `skill-foundry` (`4.7M`) | `8/8` (`integration_tests`) | `8` | `4` / `4` / — | Встроенный HTML/JS просмотрщик + read-only OOXML preview (`vendor/ooxml-numfmt`); строгий `cwd`-guard и обязательные параметры (`#24`). |
 | **`agent-guardrails`** | `guardrails` (`2.9M`) | `11/11` (`2` lib, `5` cli/mcp, `1` hook, `3` corpus) | `4` | `2` / `2` / `5` | Нулевой вес внешних runtime-зависимостей (нет `infra-core`/SQLite); `cwd`-guard перед поиском ancestor `.git` (`#24`). |
-| **Итого** | **5 ELF-бинарников (`~42M`)** | **`623/623`** | **`55`** | **`20` / `19` / `14`** | **Полная переносимость между Claude Code и Codex CLI.** |
+| **`ai-infra-mod`** *(единый пакет + `.mcpb`)* | `ai-infra-mod` (`735K`) + 5 ELF-бэкендов | `4/4` (`integration_tests`) | `56` (`55` + `mod_status`) | `6` / `10` (`mod-*`) / `9` | Единый мультиплексор MCP + 9-ролевой роутер хуков + `.mcpb` (`dist/ai-infra-mod.mcpb` / `~/Desktop/ai-infra-mod.mcpb`); `AI_INFRA_ROOT` + `AI_INFRA_RESTRICT_ROOT=1` containment. |
+| **Итого (6 плагинов)** | **6 бинарников** | **`627/627`** | **`56` / `55`** | **`26` / `29` / `23`** | **Полная переносимость между Claude Code, Claude Desktop (`.mcpb`) и Codex CLI.** |
 
 ---
 
@@ -78,6 +79,14 @@
 ### 4.5. `agent-guardrails` (`bin/guardrails`)
 - **CLI & Hooks (`hook [claude|codex|cursor] <bash-guard|edit-loop|naming-check|subagent-gate|subagent-release>`)**: `check-command`, `check-naming`, `policy-init`, `status`, `mcp`.
 - **MCP (`4` инструмента)**: `guardrails_check_command`, `guardrails_inspect_policy`, `guardrails_init_policy`, `guardrails_loop_status`.
+
+### 4.6. `ai-infra-mod` (`bin/ai-infra-mod` + Desktop Extension `.mcpb`)
+- **Назначение**: Единый пакет для установки одним действием (Claude Code, Codex CLI и Claude Desktop `.mcpb`), объединяющий все 5 подсистем в один бинарный мультиплексор/роутер без коллизий имён команд и хуков.
+- **Мультиплексор MCP (`ai-infra-mod mcp`, `56` инструментов)**: агрегирует 55 доменных инструментов из 5 дочерних ELF-процессов в `bin/` + мета-инструмент `mod_status`. Поддерживает `AI_INFRA_ROOT` / `ROOT_DIR`, MCP `roots/list` и режим `AI_INFRA_RESTRICT_ROOT=1`, при котором все пути в параметрах (включая `import`, `ceiling`, `sources`, `files`, `allow_root`, `claude_dir`) канонизируются строго внутри `AI_INFRA_ROOT`.
+- **Унифицированный роутер хуков (`9` ролей)**, **`6` навыков** (`ai-infra-autopilot`, `code-graph-intelligence`, `context-memory-transfer`, `execution-safety-guardrails`, `multi-agent-orchestration`, `skill-engineering-suite`) и **`10` неконфликтующих команд `mod-*`** (`/mod-status`, `/mod-autopilot`, `/mod-map`, `/mod-plan`, `/mod-context`, `/mod-export`, `/mod-import`, `/mod-guard`, `/mod-vet`, `/mod-cost`).
+- **Desktop Extension `.mcpb`**: упакован в `plugins/ai-infra-mod/dist/ai-infra-mod.mcpb` (`manifest_version: "0.4"`, ~`17.4 MiB`, с дубликатом в `~/Desktop/ai-infra-mod.mcpb`), настраивает `user_config.projectDir` -> `AI_INFRA_ROOT` + `AI_INFRA_RESTRICT_ROOT=1`.
+
+> **Заметка о хуках `context-graph` (#71)**: Claude Code `2.1.278` автоматически загружает стандартные `hooks/hooks.json`, `commands/`, `skills/` и `.mcp.json`; указание `"hooks": "./hooks/hooks.json"` в `.claude-plugin/plugin.json` вызывало `Duplicate hooks file detected`. Очистка `.claude-plugin/plugin.json` от избыточных ссылок на дефолтные пути устранила ошибку загрузки при сохранении совместимости с `2.1.325` и Codex.
 
 ---
 

@@ -1,0 +1,44 @@
+{
+  "name": "ai-infra-mod",
+  "version": "0.1.0",
+  "description": "Unified AI Infrastructure suite combining code graph mapping, multi-agent orchestration, context/memory graph continuity, skill foundry, and execution guardrails",
+  "author": {
+    "name": "Alex-Caepio",
+    "url": "https://github.com/Alex-Caepio/ai-infra-mod"
+  },
+  "homepage": "https://github.com/Alex-Caepio/ai-infra-mod",
+  "repository": "https://github.com/Alex-Caepio/ai-infra-mod",
+  "license": "Apache-2.0",
+  "keywords": [
+    "ai-infrastructure",
+    "code-graph",
+    "orchestration",
+    "context-graph",
+    "skill-foundry",
+    "guardrails",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.codex-mcp.json",
+  "hooks": "./hooks/codex-hooks.json",
+  "interface": {
+    "displayName": "AI Infrastructure Mod",
+    "shortDescription": "Unified code graph, orchestration, context memory, skill foundry, and guardrails",
+    "longDescription": "All-in-one dual-compatible engineering suite providing 56 MCP tools across dependency mapping, multi-service orchestration, SQLite+Markdown context graphs, skill evaluation/vetting, and POSIX AST safety guardrails.",
+    "developerName": "Alex-Caepio",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "brandColor": "#6841C6",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.svg",
+    "defaultPrompt": [
+      "Run /mod-status or /mod-autopilot on this repository",
+      "Analyze code impact and test reach before editing",
+      "Verify shell commands, architectural boundaries, and portable context memory"
+    ]
+  }
+}

@@ -56,6 +56,17 @@
       },
       "source": "./plugins/agent-guardrails",
       "category": "security"
+    },
+    {
+      "name": "ai-infra-mod",
+      "description": "Unified AI Infrastructure suite combining code graph mapping, multi-agent orchestration, context/memory graph continuity, skill foundry, and execution guardrails (plus .mcpb Desktop Extension).",
+      "version": "0.1.0",
+      "author": {
+        "name": "Alex-Caepio",
+        "url": "https://github.com/Alex-Caepio/ai-infra-mod"
+      },
+      "source": "./plugins/ai-infra-mod",
+      "category": "development"
     }
   ]
 }

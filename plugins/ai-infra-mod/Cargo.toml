@@ -1,0 +1,18 @@
+[package]
+name = "ai-infra-mod"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+serde_json = { version = "=1.0.150", features = ["preserve_order"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

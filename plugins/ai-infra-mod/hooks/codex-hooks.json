@@ -1,0 +1,94 @@
+{
+  "description": "Unified AI Infrastructure Mod lifecycle hooks for Codex CLI.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex session-start",
+            "timeout": 12,
+            "additionalContextLimit": 6000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex user-prompt",
+            "timeout": 10,
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex pre-bash",
+            "timeout": 10,
+            "statusMessage": "Checking shell command safety"
+          },
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex pre-write-edit",
+            "timeout": 10,
+            "statusMessage": "Checking file naming policy"
+          },
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex pre-subagent",
+            "timeout": 10,
+            "statusMessage": "Checking subagent guardrails and orchestration gate"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex post-write-edit",
+            "timeout": 10,
+            "statusMessage": "Checking repeated edit loop"
+          },
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex post-subagent",
+            "timeout": 10,
+            "statusMessage": "Checking orchestration dispatch mailbox"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex subagent-stop",
+            "timeout": 10,
+            "statusMessage": "Releasing subagent write lock and recording dispatch"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex stop",
+            "timeout": 12
+          }
+        ]
+      }
+    ]
+  }
+}
