@@ -1,0 +1,53 @@
+{
+  "description": "Agent Guardrails lifecycle hooks for Codex CLI.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/guardrails\" hook codex bash-guard",
+            "timeout": 10,
+            "statusMessage": "Checking shell command safety"
+          },
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/guardrails\" hook codex naming-check",
+            "timeout": 10,
+            "statusMessage": "Checking file naming policy"
+          },
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/guardrails\" hook codex subagent-gate",
+            "timeout": 10,
+            "statusMessage": "Checking subagent policy"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/guardrails\" hook codex edit-loop",
+            "timeout": 10,
+            "statusMessage": "Checking repeated edit loop"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/guardrails\" hook codex subagent-release",
+            "timeout": 10,
+            "statusMessage": "Releasing subagent write lock"
+          }
+        ]
+      }
+    ]
+  }
+}

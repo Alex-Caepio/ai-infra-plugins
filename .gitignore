@@ -1,0 +1,8 @@
+.build/
+target/
+*.swp
+.DS_Store
+.graph-map/
+.orch/
+.context-graph/
+.agent-guardrails/

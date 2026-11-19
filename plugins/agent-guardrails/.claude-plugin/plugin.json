@@ -1,0 +1,19 @@
+{
+  "name": "agent-guardrails",
+  "version": "0.1.0",
+  "description": "Portable POSIX AST shell safety guard, $TMPDIR command/edit loop breakers, repository file-naming checks, and advisory subagent write-lock gates for Claude Code and Codex.",
+  "author": {
+    "name": "AI-Infrastructure Contributors"
+  },
+  "homepage": "https://github.com/Alex-Caepio/agent-guardrails",
+  "repository": "https://github.com/Alex-Caepio/agent-guardrails",
+  "license": "Apache-2.0",
+  "keywords": [
+    "guardrails",
+    "security",
+    "shell-guard",
+    "loop-detection",
+    "hooks",
+    "mcp"
+  ]
+}

@@ -1,0 +1,22 @@
+[package]
+name = "agent-guardrails"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+license = "Apache-2.0"
+description = "Portable POSIX AST shell safety guardrails, session loop breakers, file-naming validation, and subagent write-lock gates for Claude Code and Codex CLI."
+
+[[bin]]
+name = "guardrails"
+path = "src/main.rs"
+
+[dependencies]
+libc = "=0.2.191"
+regex = "1"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+sha2 = "=0.11.0"
+
+[dev-dependencies]
+tempfile = "=3.27.0"

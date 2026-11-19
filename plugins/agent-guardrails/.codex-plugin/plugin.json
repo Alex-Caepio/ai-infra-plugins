@@ -1,0 +1,44 @@
+{
+  "name": "agent-guardrails",
+  "version": "0.1.0",
+  "description": "Portable POSIX AST shell safety guard, $TMPDIR command/edit loop breakers, repository file-naming checks, and advisory subagent write-lock gates for Claude Code and Codex.",
+  "author": {
+    "name": "AI-Infrastructure Contributors"
+  },
+  "homepage": "https://github.com/Alex-Caepio/agent-guardrails",
+  "repository": "https://github.com/Alex-Caepio/agent-guardrails",
+  "license": "Apache-2.0",
+  "keywords": [
+    "guardrails",
+    "security",
+    "shell-guard",
+    "loop-detection",
+    "hooks",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.codex-mcp.json",
+  "hooks": "./hooks/codex-hooks.json",
+  "interface": {
+    "displayName": "Agent Guardrails",
+    "shortDescription": "AST shell guard, loop breaker, and write-lock gate",
+    "longDescription": "Inspects shell pipelines with a full POSIX AST parser, blocks destructive Git/SQL/DB/secret operations across selectable ecosystem presets (generic, laravel, symfony, wordpress, node, python, rust), breaks repeated command/edit loops via $TMPDIR counters, validates file naming, and serializes concurrent write-capable subagents.",
+    "developerName": "AI-Infrastructure Contributors",
+    "category": "Security",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Lifecycle hooks"
+    ],
+    "websiteURL": "https://github.com/Alex-Caepio/agent-guardrails",
+    "defaultPrompt": [
+      "Initialize guardrails policy for this repository preset.",
+      "Check whether this shell command is safe under guardrails policy.",
+      "Inspect current session loop counters and active guardrails rules."
+    ],
+    "brandColor": "#0F766E",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.svg",
+    "screenshots": []
+  }
+}

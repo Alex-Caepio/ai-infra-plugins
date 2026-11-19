@@ -1,0 +1,61 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ai-infra-plugins",
+  "description": "Standalone dual-compatible plugins for Claude Code and Codex CLI extracted from AI-Infrastructure.",
+  "owner": {
+    "name": "AI-Infrastructure Contributors"
+  },
+  "plugins": [
+    {
+      "name": "graph-map",
+      "description": "Codebase structural knowledge graph engine, blast-radius / test-reachability / git-hotspot analyzer, and interactive WASM SVG architecture viewer for Claude Code and Codex.",
+      "version": "0.1.0",
+      "author": {
+        "name": "AI-Infrastructure Contributors"
+      },
+      "source": "./plugins/graph-map",
+      "category": "development"
+    },
+    {
+      "name": "system-orchestration",
+      "description": "Cross-repo system plan/execute orchestrator, multi-agent session scheduler, fleet review and adversarial debate coordinator, SDD delivery previews, and attach runner for Claude Code and Codex.",
+      "version": "0.1.0",
+      "author": {
+        "name": "AI-Infrastructure Contributors"
+      },
+      "source": "./plugins/system-orchestration",
+      "category": "development"
+    },
+    {
+      "name": "context-graph",
+      "description": "Unified Context Graph, Project Brain, Memory Bank, session handoffs, and SHA-256 attested export/import bundles.",
+      "version": "0.1.0",
+      "author": {
+        "name": "AI-Infrastructure Contributors",
+        "url": "https://github.com/Alex-Caepio/context-graph"
+      },
+      "source": "./plugins/context-graph",
+      "category": "productivity"
+    },
+    {
+      "name": "skill-foundry",
+      "description": "Engineering workbench for Agent Skills: scaffold, validate, package, run cross-CLI trigger evals, optimize descriptions, lint token budgets, vet security risks, and audit Claude/Codex token cost.",
+      "version": "0.1.0",
+      "author": {
+        "name": "AI-Infrastructure Contributors"
+      },
+      "source": "./plugins/skill-foundry",
+      "category": "development"
+    },
+    {
+      "name": "agent-guardrails",
+      "description": "Portable POSIX AST shell safety guard, $TMPDIR command/edit loop breakers, repository file-naming checks, and advisory subagent write-lock gates for Claude Code and Codex.",
+      "version": "0.1.0",
+      "author": {
+        "name": "AI-Infrastructure Contributors"
+      },
+      "source": "./plugins/agent-guardrails",
+      "category": "security"
+    }
+  ]
+}

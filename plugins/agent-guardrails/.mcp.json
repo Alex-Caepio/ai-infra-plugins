@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agent-guardrails": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/guardrails",
+      "args": ["mcp"]
+    }
+  }
+}

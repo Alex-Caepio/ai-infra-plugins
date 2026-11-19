@@ -1,0 +1,68 @@
+{
+  "name": "ai-infra-plugins",
+  "interface": {
+    "displayName": "AI Infrastructure Plugins"
+  },
+  "plugins": [
+    {
+      "name": "graph-map",
+      "source": {
+        "source": "local",
+        "path": "./plugins/graph-map"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "system-orchestration",
+      "source": {
+        "source": "local",
+        "path": "./plugins/system-orchestration"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "context-graph",
+      "source": {
+        "source": "local",
+        "path": "./plugins/context-graph"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "skill-foundry",
+      "source": {
+        "source": "local",
+        "path": "./plugins/skill-foundry"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "agent-guardrails",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agent-guardrails"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Security"
+    }
+  ]
+}
