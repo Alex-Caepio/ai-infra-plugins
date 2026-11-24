@@ -57,7 +57,7 @@ claude --plugin-dir ./plugins/ai-infra-mod
 
 ## Claude Desktop Extension (`.mcpb`)
 
-Install the prebuilt Desktop Extension (`0.2.0`, `38.3 MiB` / `40,150,733` bytes) from [`plugins/ai-infra-mod/dist/ai-infra-mod.mcpb`](./plugins/ai-infra-mod/dist/ai-infra-mod.mcpb) via **Claude Desktop -> Settings -> Extensions**:
+Install the prebuilt Desktop Extension (`0.2.0`, `38.3 MiB` / `40,150,506` bytes) from [`plugins/ai-infra-mod/dist/ai-infra-mod.mcpb`](./plugins/ai-infra-mod/dist/ai-infra-mod.mcpb) via **Claude Desktop -> Settings -> Extensions**:
 
 - Configures `server.type: "binary"` (`${__dirname}/bin/ai-infra-mod mcp`) with all 6 sibling ELFs (`graph-map`, `orch-engine`, `context-graph-engine`, `skill-foundry`, `guardrails`, `skillcache-engine`) bundled in `bin/`.
 - Prompts once for `user_config.projectDir`, exporting `AI_INFRA_ROOT` and `AI_INFRA_RESTRICT_ROOT=1` so all 80 tools canonicalize paths inside `AI_INFRA_ROOT` and reject path-escape attempts (`isError: true`).

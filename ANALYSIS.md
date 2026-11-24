@@ -28,7 +28,7 @@
 | **`skill-foundry`** | `0.1.0` | `skill-foundry` (`7.1M`) | `22/22` | `8` | `4` / `4` / — | SQLite WAL `QueryMemoCache`, Gate-1 prefilter, `OptimizationRoiTracker`, SkillCache economics `benchmark`, SHA-256 `TreeReceiptStore` budget, hardened `FeedbackStore` + standalone HTML/OOXML UI; `cwd`-guard (`#24`). |
 | **`agent-guardrails`** | `0.1.0` | `guardrails` (`3.0M`) | `18/18` | `4` | `2` / `2` / `5` | POSIX AST (`rg --pre`/опасные флаги), error-signature-scoped `edit-loop` (`PostToolUse` `Bash\|Write\|Edit\|MultiEdit\|NotebookEdit`), `SKILL_CACHE_RACY_NS` naming check, `flock` + `O_NOFOLLOW`; `cwd`-guard (`#24`). |
 | **`skillcache`** | `0.1.0` | `skillcache-engine` (`9.1M`) | `136/136` | `9` | `3` / `4` / — | Trace-компилятор капсул (`active`/`hybrid`/`textual`), Gate-1 стат. анализатор, Gate-2/3 `bwrap`/`--unshare-net` песочница, private SQLite lifecycle, multicall `skillcache-run`/`skillcache-tool`; `cwd`-guard (`#24`). |
-| **`ai-infra-mod`** *(единый пакет + `.mcpb`)* | `0.2.0` | `ai-infra-mod` (`740K`) + `6` ELF-бэкендов | `6/6` | `80` (`79` + `mod_status`) | `7` / `12` (`mod-*`) / `9` | Мультиплексор 80 MCP-инструментов и 9-ролевой роутер хуков поверх всех 6 движков; `.mcpb` (`dist/ai-infra-mod.mcpb`, `38.3 MiB` / `40,150,733B`, 7 ELF); `AI_INFRA_ROOT` + `AI_INFRA_RESTRICT_ROOT=1`. |
+| **`ai-infra-mod`** *(единый пакет + `.mcpb`)* | `0.2.0` | `ai-infra-mod` (`740K`) + `6` ELF-бэкендов | `6/6` | `80` (`79` + `mod_status`) | `7` / `12` (`mod-*`) / `9` | Мультиплексор 80 MCP-инструментов и 9-ролевой роутер хуков поверх всех 6 движков; `.mcpb` (`dist/ai-infra-mod.mcpb`, `38.3 MiB` / `40,150,506B`, 7 ELF); `AI_INFRA_ROOT` + `AI_INFRA_RESTRICT_ROOT=1`. |
 | **Итого (7 плагинов)** | — | **7 бинарников** | **`1,921` (`1` ignored)** | **`79` / `80`** | **`25`+`7` / `27`+`12` / `14`+`9`** | **Полная переносимость между Claude Code, Claude Desktop (`.mcpb`) и Codex CLI.** |
 
 ---
@@ -74,7 +74,7 @@
 
 ### 4.7. `ai-infra-mod` (`0.2.0`, `bin/ai-infra-mod` + `.mcpb`)
 - **Мультиплексор MCP (`80` инструментов)**: объединяет все **79** инструментов 6 модульных движков + `mod_status`; поддерживает `AI_INFRA_ROOT`, `roots/list` и строгую изоляцию `AI_INFRA_RESTRICT_ROOT=1`.
-- **Desktop Extension `.mcpb`**: `plugins/ai-infra-mod/dist/ai-infra-mod.mcpb` (`manifest_version: "0.4"`, `version: "0.2.0"`, `38.3 MiB` / `40,150,733B`, SHA-256 синхронизирован с `~/Desktop/ai-infra-mod.mcpb`, внутри все 7 ELF-бинарников).
+- **Desktop Extension `.mcpb`**: `plugins/ai-infra-mod/dist/ai-infra-mod.mcpb` (`manifest_version: "0.4"`, `version: "0.2.0"`, `38.3 MiB` / `40,150,506B`, SHA-256 синхронизирован с `~/Desktop/ai-infra-mod.mcpb`, внутри все 7 ELF-бинарников).
 
 ---
 
