@@ -11,15 +11,17 @@ pub enum BackendKind {
     Context,
     Skill,
     Guard,
+    SkillCache,
 }
 
 impl BackendKind {
-    pub const ALL: [BackendKind; 5] = [
+    pub const ALL: [BackendKind; 6] = [
         BackendKind::Graph,
         BackendKind::Orch,
         BackendKind::Context,
         BackendKind::Skill,
         BackendKind::Guard,
+        BackendKind::SkillCache,
     ];
 
     pub fn id(self) -> &'static str {
@@ -29,6 +31,7 @@ impl BackendKind {
             BackendKind::Context => "context-graph",
             BackendKind::Skill => "skill-foundry",
             BackendKind::Guard => "agent-guardrails",
+            BackendKind::SkillCache => "skillcache",
         }
     }
 
@@ -39,6 +42,7 @@ impl BackendKind {
             BackendKind::Context => "context",
             BackendKind::Skill => "skill",
             BackendKind::Guard => "guard",
+            BackendKind::SkillCache => "skillcache",
         }
     }
 
@@ -49,6 +53,7 @@ impl BackendKind {
             BackendKind::Context => "context-graph-engine",
             BackendKind::Skill => "skill-foundry",
             BackendKind::Guard => "guardrails",
+            BackendKind::SkillCache => "skillcache-engine",
         };
         if cfg!(windows) {
             match self {
@@ -57,6 +62,7 @@ impl BackendKind {
                 BackendKind::Context => "context-graph-engine.exe",
                 BackendKind::Skill => "skill-foundry.exe",
                 BackendKind::Guard => "guardrails.exe",
+                BackendKind::SkillCache => "skillcache-engine.exe",
             }
         } else {
             base

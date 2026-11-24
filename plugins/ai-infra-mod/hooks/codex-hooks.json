@@ -56,7 +56,7 @@
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/bin/ai-infra-mod\" hook codex post-write-edit",
             "timeout": 10,
-            "statusMessage": "Checking repeated edit loop"
+            "statusMessage": "Checking bash and edit loop"
           },
           {
             "type": "command",

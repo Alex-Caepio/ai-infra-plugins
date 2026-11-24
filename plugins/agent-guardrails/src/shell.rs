@@ -6,7 +6,11 @@ use crate::{
     presets::Preset,
 };
 use regex::Regex;
-use std::{path::Path, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 
 fn tail_matches<'a>(mut value: &'a str, suffix: &str) -> &'a str {
     if !suffix.is_empty() {
@@ -558,7 +562,35 @@ fn program(words: &[String]) -> (usize, String, usize) {
     (i, name, argument.min(words.len()))
 }
 
-fn glob(value: &str, pattern: &str) -> bool {
+const GLOB_REGEX_CACHE_CAP: usize = 256;
+
+#[derive(Default)]
+struct GlobRegexCache {
+    seq: u64,
+    entries: HashMap<String, (Option<Regex>, u64)>,
+}
+
+fn glob_regex_cache() -> &'static Mutex<GlobRegexCache> {
+    static CACHE: OnceLock<Mutex<GlobRegexCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(GlobRegexCache::default()))
+}
+
+#[cfg(test)]
+thread_local! {
+    static GLOB_REGEX_COMPILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn glob_regex_compiles_get() -> usize {
+    GLOB_REGEX_COMPILES.with(|cell| cell.get())
+}
+
+#[cfg(test)]
+fn bump_glob_regex_compiles() {
+    GLOB_REGEX_COMPILES.with(|cell| cell.set(cell.get() + 1));
+}
+
+fn translate_glob(pattern: &str) -> String {
     let mut out = String::from("^");
     let mut chars = pattern.chars().peekable();
     while let Some(c) = chars.next() {
@@ -582,7 +614,46 @@ fn glob(value: &str, pattern: &str) -> bool {
         }
     }
     out.push('$');
-    Regex::new(&out).is_ok_and(|p| p.is_match(value))
+    out
+}
+
+fn glob(value: &str, pattern: &str) -> bool {
+    let cached = glob_regex_cache().lock().ok().and_then(|mut cache| {
+        cache.seq = cache.seq.saturating_add(1);
+        let seq = cache.seq;
+        cache.entries.get_mut(pattern).map(|(compiled, last_used)| {
+            *last_used = seq;
+            compiled.clone()
+        })
+    });
+    let compiled = match cached {
+        Some(entry) => entry,
+        None => {
+            #[cfg(test)]
+            bump_glob_regex_compiles();
+            let translated = translate_glob(pattern);
+            let compiled = Regex::new(&translated).ok();
+            if let Ok(mut cache) = glob_regex_cache().lock() {
+                cache.seq = cache.seq.saturating_add(1);
+                let seq = cache.seq;
+                if cache.entries.len() >= GLOB_REGEX_CACHE_CAP
+                    && !cache.entries.contains_key(pattern)
+                    && let Some(evict) = cache
+                        .entries
+                        .iter()
+                        .min_by_key(|(_, (_, last_used))| *last_used)
+                        .map(|(k, _)| k.clone())
+                {
+                    cache.entries.remove(&evict);
+                }
+                cache
+                    .entries
+                    .insert(pattern.to_owned(), (compiled.clone(), seq));
+            }
+            compiled
+        }
+    };
+    compiled.is_some_and(|p| p.is_match(value))
 }
 
 fn listed(value: &str, patterns: &str) -> bool {
@@ -856,15 +927,7 @@ impl Policy {
                     }
                 }
                 ["write", files, category]
-                    if (segment.redirects.iter().any(|(op, target)| {
-                        [">", ">>"].contains(&op.as_str()) && listed(base(target), files)
-                    }) || program == "tee"
-                        && segment
-                            .words
-                            .iter()
-                            .skip(argument)
-                            .filter(|word| !word.starts_with('-'))
-                            .any(|word| listed(base(word), files))) =>
+                    if writes_secret_target(segment, program, argument, files) =>
                 {
                     return Some((*category).into());
                 }
@@ -873,6 +936,88 @@ impl Policy {
         }
         None
     }
+}
+
+fn writes_secret_target(
+    segment: &Segment,
+    program: &str,
+    argument: usize,
+    files: &str,
+) -> bool {
+    if segment.redirects.iter().any(|(op, target)| {
+        [">", ">>"].contains(&op.as_str()) && listed(base(target), files)
+    }) {
+        return true;
+    }
+    if program == "tee"
+        && segment
+            .words
+            .iter()
+            .skip(argument)
+            .filter(|word| !word.starts_with('-'))
+            .any(|word| listed(base(word), files))
+    {
+        return true;
+    }
+    if program == "sort" {
+        let mut idx = argument;
+        while idx < segment.words.len() {
+            let word = &segment.words[idx];
+            if word == "--" {
+                break;
+            }
+            if word == "-o"
+                || word == "--output"
+                || (!word.starts_with("--") && word.starts_with('-') && word.ends_with('o'))
+            {
+                if segment
+                    .words
+                    .get(idx + 1)
+                    .is_some_and(|t| listed(base(t), files))
+                {
+                    return true;
+                }
+                idx += 2;
+                continue;
+            }
+            if let Some(target) = word
+                .strip_prefix("--output=")
+                .or_else(|| word.strip_prefix("-o"))
+                && !target.is_empty()
+                && listed(base(target), files)
+            {
+                return true;
+            }
+            idx += 1;
+        }
+    }
+    if program == "git" {
+        let mut idx = argument;
+        while idx < segment.words.len() {
+            let word = &segment.words[idx];
+            if word == "--" {
+                break;
+            }
+            if word == "--output" {
+                if segment
+                    .words
+                    .get(idx + 1)
+                    .is_some_and(|t| listed(base(t), files))
+                {
+                    return true;
+                }
+                idx += 2;
+                continue;
+            }
+            if let Some(target) = word.strip_prefix("--output=")
+                && listed(base(target), files)
+            {
+                return true;
+            }
+            idx += 1;
+        }
+    }
+    false
 }
 
 fn reads(segment: &Segment, program: &str, argument: usize, readers: &str, files: &str) -> bool {
@@ -1034,6 +1179,15 @@ fn git(words: &[String], mut i: usize, nested: &mut Vec<String>) -> Option<Strin
             }
             "-C" | "--git-dir" | "--work-tree" | "--namespace" | "--super-prefix"
             | "--attr-source" => i += 2,
+            value if value.starts_with("-c=") => {
+                if value["-c=".len()..]
+                    .to_ascii_lowercase()
+                    .starts_with("core.hookspath=")
+                {
+                    return Some("verification bypass - git -c core.hooksPath".into());
+                }
+                i += 1;
+            }
             value if value.starts_with("--config-env=") => {
                 if value["--config-env=".len()..]
                     .to_ascii_lowercase()
@@ -1487,6 +1641,29 @@ pub fn validate_in_repo(
         }
         if !SEARCH.contains(&name.as_str()) && !["echo", "printf"].contains(&name.as_str()) {
             nested.extend(shell_commands(&segment, start, &name));
+        } else if name == "rg" {
+            let mut arg_idx = argument;
+            while arg_idx < segment.words.len() {
+                let word = &segment.words[arg_idx];
+                if word == "--" {
+                    break;
+                }
+                if word == "--pre" {
+                    if let Some(cmd) = segment.words.get(arg_idx + 1)
+                        && !cmd.is_empty()
+                    {
+                        nested.push(cmd.clone());
+                    }
+                    arg_idx += 2;
+                    continue;
+                }
+                if let Some(cmd) = word.strip_prefix("--pre=")
+                    && !cmd.is_empty()
+                {
+                    nested.push(cmd.to_string());
+                }
+                arg_idx += 1;
+            }
         }
         if let Some(category) = policy.apply(&segment, &name, argument, start) {
             return Ok(Some(category));
@@ -1560,6 +1737,127 @@ pub fn polling(command: &str) -> bool {
             .is_ok_and(|pattern| pattern.is_match(command))
 }
 
+const READ_ONLY_GIT_SUBCOMMANDS: &[&str] = &[
+    "status",
+    "diff",
+    "log",
+    "show",
+    "rev-parse",
+    "ls-files",
+    "ls-tree",
+    "cat-file",
+    "rev-list",
+    "shortlog",
+    "blame",
+    "grep",
+    "describe",
+];
+
+const READ_ONLY_CORE_TOOLS: &[&str] = &[
+    "ls", "pwd", "which", "whereis", "type", "cat", "head", "tail", "wc", "cut", "uniq", "tr",
+    "stat", "file", "readlink", "realpath", "basename", "dirname", "grep", "egrep", "fgrep", "rg",
+    "ag", "ack", "jq", "tree", "du", "df", "env", "printenv", "id", "whoami", "uname", "date",
+    "echo", "printf",
+];
+
+fn sort_has_output_flag(args: &[String]) -> bool {
+    args.iter().take_while(|a| a.as_str() != "--").any(|arg| {
+        arg == "-o"
+            || arg == "--output"
+            || arg.starts_with("--output=")
+            || (!arg.starts_with("--") && arg.starts_with('-') && arg[1..].contains('o'))
+    })
+}
+
+fn rg_has_preprocessor(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|a| a.as_str() != "--")
+        .any(|arg| arg == "--pre" || arg.starts_with("--pre="))
+}
+
+fn find_has_exec_or_delete(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "-exec" | "-execdir" | "-ok" | "-okdir" | "-delete" | "-fprint" | "-fprint0" | "-fprintf" | "-fls"
+        )
+    })
+}
+
+fn git_segment_is_read_only(args: &[String]) -> bool {
+    let mut at = 0;
+    let mut has_config_override = false;
+    while at < args.len() && args[at].starts_with('-') {
+        if args[at] == "-c" || args[at].starts_with("-c=") {
+            has_config_override = true;
+        }
+        at += if ["-C", "-c", "--git-dir", "--work-tree"].contains(&args[at].as_str()) {
+            2
+        } else {
+            1
+        };
+    }
+    let action = args.get(at).map(String::as_str).unwrap_or("");
+    let has_output_flag = args
+        .iter()
+        .take_while(|a| a.as_str() != "--")
+        .any(|arg| arg == "--output" || arg.starts_with("--output="));
+    !has_config_override
+        && !has_output_flag
+        && !action.is_empty()
+        && READ_ONLY_GIT_SUBCOMMANDS.contains(&action)
+}
+
+/// Deterministic `CommandAnalyzer`-aligned check reporting whether `command` is strictly read-only.
+pub fn is_read_only_cli(command: &str) -> bool {
+    let Ok(segments) = split(command) else {
+        return false;
+    };
+    let non_empty: Vec<&Segment> = segments.iter().filter(|s| !s.words.is_empty()).collect();
+    if non_empty.is_empty() {
+        return false;
+    }
+    if command.contains("&&")
+        || command.contains("||")
+        || command.contains(';')
+        || command.contains('\n')
+    {
+        return false;
+    }
+    for segment in non_empty {
+        if segment.depth > 0 || !segment.document.is_empty() {
+            return false;
+        }
+        if segment
+            .redirects
+            .iter()
+            .any(|(op, target)| op != "<" || target.is_empty())
+        {
+            return false;
+        }
+        let (start, name, argument) = program(&segment.words);
+        if name.is_empty() || LAUNCHERS.contains(&name.as_str()) {
+            return false;
+        }
+        // Any wrapper (`env`/`sudo`/`xargs`/etc.) or nested command substitution disqualifies read-only.
+        if start != 0 && !segment.words[..start].iter().all(|w| assign(w)) {
+            return false;
+        }
+        let args = &segment.words[argument.min(segment.words.len())..];
+        let safe_segment = match name.as_str() {
+            "git" => git_segment_is_read_only(args),
+            "sort" => !sort_has_output_flag(args),
+            "rg" => !rg_has_preprocessor(args),
+            "find" => !find_has_exec_or_delete(args),
+            _ => READ_ONLY_CORE_TOOLS.contains(&name.as_str()),
+        };
+        if !safe_segment {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1616,6 +1914,68 @@ mod tests {
             validate_in_repo("rm -rf /tmp/verify-build", &policy, Some(repo))
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn glob_cache_reuses_compiled_patterns_and_bounds_capacity() {
+        let pat_a = "unique-glob-cache-a.*";
+        let pat_c = "unique-glob-cache-b.*,!unique-glob-cache-b.ex";
+        let before = glob_regex_compiles_get();
+        assert!(glob("unique-glob-cache-a.local", pat_a));
+        assert!(listed("unique-glob-cache-b.prod", pat_c));
+        assert!(!listed("unique-glob-cache-b.ex", pat_c));
+        assert!(glob("a", "[!xy]"));
+        assert!(!glob("x", "[!xy]"));
+        let after_first = glob_regex_compiles_get();
+        assert!(after_first > before);
+
+        // Repeated calls with same globs compile 0 new regexes.
+        assert!(glob("unique-glob-cache-a.staging", pat_a));
+        assert!(listed("unique-glob-cache-b.staging", pat_c));
+        assert!(glob("c", "[!xy]"));
+        assert_eq!(glob_regex_compiles_get(), after_first);
+
+        // Filling beyond GLOB_REGEX_CACHE_CAP bounds stored entries cleanly.
+        for i in 0..(GLOB_REGEX_CACHE_CAP + 20) {
+            let pat = format!("pat-{i}-*");
+            assert!(glob(&format!("pat-{i}-x"), &pat));
+        }
+        assert!(glob_regex_cache().lock().unwrap().entries.len() <= GLOB_REGEX_CACHE_CAP);
+    }
+
+    #[test]
+    fn command_analyzer_read_only_and_bypass_refinements() {
+        assert!(is_read_only_cli("rg 'a|b' src"));
+        assert!(is_read_only_cli("git status | head -n 20"));
+        assert!(is_read_only_cli("sort names.txt"));
+        assert!(!is_read_only_cli("sort -o out.txt names.txt"));
+        assert!(!is_read_only_cli("rg --pre=./evil.sh echo src"));
+        assert!(!is_read_only_cli("git diff --output=out.txt"));
+        assert!(!is_read_only_cli("git -c core.eol=lf status"));
+        assert!(!is_read_only_cli("git -c=core.eol=lf status"));
+        assert!(!is_read_only_cli("find . -exec rm {} ;"));
+
+        let node = Policy::for_preset(Preset::Node);
+        assert!(
+            validate("rg --pre='cat .env' pattern src", &node)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            validate("git -c=core.hooksPath=/tmp/hooks commit -m x", &node)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            validate("sort -o .env names.txt", &node)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            validate("git diff --output=.env", &node)
+                .unwrap()
+                .is_some()
         );
     }
 }

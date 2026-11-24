@@ -8,27 +8,29 @@
   "plugins": [
     {
       "name": "graph-map",
-      "description": "Codebase structural knowledge graph engine, blast-radius / test-reachability / git-hotspot analyzer, and interactive WASM SVG architecture viewer for Claude Code and Codex.",
-      "version": "0.1.0",
+      "description": "13-language native AST structural knowledge graph engine, Omnigraph/blast-radius/test-reachability/git-hotspot analyzer, and interactive WASM SVG architecture viewer for Claude Code and Codex.",
+      "version": "0.2.0",
       "author": {
-        "name": "AI-Infrastructure Contributors"
+        "name": "AI-Infrastructure Contributors",
+        "url": "https://github.com/Alex-Caepio/graph-map"
       },
       "source": "./plugins/graph-map",
       "category": "development"
     },
     {
       "name": "system-orchestration",
-      "description": "Cross-repo system plan/execute orchestrator, multi-agent session scheduler, fleet review and adversarial debate coordinator, SDD delivery previews, and attach runner for Claude Code and Codex.",
+      "description": "Cross-repo system plan/execute orchestrator, embedded Omnigraph explorer, live SSE & fine-grained permission prompts, multi-agent session scheduler, fleet/clash review, SDD previews, and WASM workbench.",
       "version": "0.1.0",
       "author": {
-        "name": "AI-Infrastructure Contributors"
+        "name": "AI-Infrastructure Contributors",
+        "url": "https://github.com/Alex-Caepio/system-orchestration"
       },
       "source": "./plugins/system-orchestration",
       "category": "development"
     },
     {
       "name": "context-graph",
-      "description": "Unified Context Graph, Project Brain, Memory Bank, session handoffs, and SHA-256 attested export/import bundles.",
+      "description": "Unified Context Graph, Project Brain, Memory Bank, embedded Omnigraph atoms/merge-keep integration, session handoffs, and SHA-256 attested export/import bundles.",
       "version": "0.1.0",
       "author": {
         "name": "AI-Infrastructure Contributors",
@@ -39,28 +41,41 @@
     },
     {
       "name": "skill-foundry",
-      "description": "Engineering workbench for Agent Skills: scaffold, validate, package, run cross-CLI trigger evals, optimize descriptions, lint token budgets, vet security risks, and audit Claude/Codex token cost.",
+      "description": "Engineering workbench for Agent Skills: scaffold, validate, package, SQLite WAL QueryMemoCache trigger evals, ROI-tracked optimization, SkillCache multi-arm benchmarks, SHA-256 budget linter, 8+4 vetting, and dual-host cost audit.",
       "version": "0.1.0",
       "author": {
-        "name": "AI-Infrastructure Contributors"
+        "name": "AI-Infrastructure Contributors",
+        "url": "https://github.com/Alex-Caepio/skill-foundry"
       },
       "source": "./plugins/skill-foundry",
       "category": "development"
     },
     {
       "name": "agent-guardrails",
-      "description": "Portable POSIX AST shell safety guard, $TMPDIR command/edit loop breakers, repository file-naming checks, and advisory subagent write-lock gates for Claude Code and Codex.",
+      "description": "Portable POSIX AST shell safety guard, $TMPDIR bash/error signature-scoped loop breakers, settled naming checks, and advisory subagent write-lock gates for Claude Code and Codex.",
       "version": "0.1.0",
       "author": {
-        "name": "AI-Infrastructure Contributors"
+        "name": "AI-Infrastructure Contributors",
+        "url": "https://github.com/Alex-Caepio/agent-guardrails"
       },
       "source": "./plugins/agent-guardrails",
       "category": "security"
     },
     {
-      "name": "ai-infra-mod",
-      "description": "Unified AI Infrastructure suite combining code graph mapping, multi-agent orchestration, context/memory graph continuity, skill foundry, and execution guardrails (plus .mcpb Desktop Extension).",
+      "name": "skillcache",
+      "description": "Standalone SkillCache trace compiler, static Gate-1 dataflow/secret validator, network-isolated bwrap/sandbox Gate-2/3 executor, and 9-tool MCP server for Claude Code and Codex.",
       "version": "0.1.0",
+      "author": {
+        "name": "AI-Infrastructure Contributors",
+        "url": "https://github.com/Alex-Caepio/skillcache"
+      },
+      "source": "./plugins/skillcache",
+      "category": "development"
+    },
+    {
+      "name": "ai-infra-mod",
+      "description": "Unified AI Infrastructure suite combining all 6 engines (graph-map, orchestration/Omnigraph, context-graph, skill-foundry, agent-guardrails, skillcache) with 80 MCP tools, 9 hooks, and .mcpb Desktop Extension.",
+      "version": "0.2.0",
       "author": {
         "name": "Alex-Caepio",
         "url": "https://github.com/Alex-Caepio/ai-infra-mod"

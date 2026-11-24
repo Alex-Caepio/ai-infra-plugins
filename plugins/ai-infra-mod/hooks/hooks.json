@@ -1,5 +1,5 @@
 {
-  "description": "Unified AI Infrastructure Mod lifecycle hooks covering context continuity, working memory, POSIX AST bash guardrails, file-naming & edit-loop breakers, and subagent orchestration gates.",
+  "description": "Unified AI Infrastructure Mod lifecycle hooks covering context & IR-epoch continuity, working memory, POSIX AST bash guardrails, file-naming & normalized bash/edit-loop breakers, and subagent orchestration gates.",
   "hooks": {
     "SessionStart": [
       {
@@ -57,7 +57,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",

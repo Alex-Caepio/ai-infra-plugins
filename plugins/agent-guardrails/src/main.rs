@@ -310,7 +310,7 @@ fn cmd_status(args: &[String]) -> Result<u8> {
             .as_str()
             .unwrap_or("(built-in default)");
         let out = format!(
-            "root: {}\npreset: {} ({})\npolicy_file: {}\nrules: {} builtin + {} custom\ncounters ({}): cmd={} (max={}) edit={} (max={})\nwriter_lock: {}\n",
+            "root: {}\npreset: {} ({})\npolicy_file: {}\nrules: {} builtin + {} custom\ncounters ({}): cmd={} (max={}) edit={} (max={})\nactive_signature: {}\nwriter_lock: {}\n",
             report["policy"]["root"].as_str().unwrap_or(""),
             report["policy"]["preset"].as_str().unwrap_or("generic"),
             report["policy"]["preset_description"].as_str().unwrap_or(""),
@@ -322,6 +322,7 @@ fn cmd_status(args: &[String]) -> Result<u8> {
             loop_status.max_command_count,
             loop_status.edit_counters,
             loop_status.max_edit_count,
+            loop_status.active_signature.as_deref().unwrap_or("none"),
             loop_status.active_writer_lock.as_deref().unwrap_or("none"),
         );
         write_streams(out.as_bytes(), &[])?;

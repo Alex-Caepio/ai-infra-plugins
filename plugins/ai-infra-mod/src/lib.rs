@@ -15,12 +15,12 @@ fn usage() -> &'static str {
     concat!(
         "ai-infra-mod ",
         env!("CARGO_PKG_VERSION"),
-        " — Unified AI-Infrastructure suite CLI, 56-tool MCP multiplexer, & lifecycle hook router\n\n",
+        " — Unified AI-Infrastructure suite CLI, 80-tool MCP multiplexer, & lifecycle hook router\n\n",
         "USAGE:\n",
         "  ai-infra-mod status [--project <dir>] [--json]\n",
         "  ai-infra-mod mcp\n",
         "  ai-infra-mod hook [claude|codex|cursor] <role> [OPTIONS]\n",
-        "  ai-infra-mod <graph|orch|context|skill|guard> [SUBSYSTEM_ARGS...]\n",
+        "  ai-infra-mod <graph|orch|context|skill|guard|skillcache> [SUBSYSTEM_ARGS...]\n",
         "  ai-infra-mod --help | --version\n"
     )
 }
@@ -163,6 +163,7 @@ pub fn dispatch(args: &[String]) -> Result<i32, String> {
         "context" => passthrough(BackendKind::Context, rest),
         "skill" => passthrough(BackendKind::Skill, rest),
         "guard" => passthrough(BackendKind::Guard, rest),
+        "skillcache" => passthrough(BackendKind::SkillCache, rest),
         other => Err(format!(
             "Unknown subcommand `{other}`. Run `ai-infra-mod --help`."
         )),

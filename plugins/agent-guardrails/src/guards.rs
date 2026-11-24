@@ -6,11 +6,14 @@ use crate::{
     presets::Preset,
     shell,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::UNIX_EPOCH,
 };
 
 const EDIT_TOOLS: &[&str] = &[
@@ -22,6 +25,24 @@ const EDIT_TOOLS: &[&str] = &[
     "notebook_edit",
     "apply_patch",
 ];
+const CHECK_TOOLS: &[&str] = &["bash", "shell", "terminal", "run_command"];
+const SKILL_CACHE_RACY_NS: i128 = 2_000_000_000;
+
+#[cfg(test)]
+thread_local! {
+    static SKILL_DIR_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ROSTER_DIR_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn bump_skill_dir_scans() {
+    SKILL_DIR_SCANS.with(|cell| cell.set(cell.get() + 1));
+}
+
+#[cfg(test)]
+fn bump_roster_dir_scans() {
+    ROSTER_DIR_SCANS.with(|cell| cell.set(cell.get() + 1));
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct GuardOutput {
@@ -116,10 +137,107 @@ fn allowed_tool(payload: &Value, names: &[&str]) -> bool {
         })
 }
 
+fn integer_field(value: &Value, keys: &[&str]) -> Option<i64> {
+    match value {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(found) = map.get(*key).and_then(Value::as_i64) {
+                    return Some(found);
+                }
+            }
+            map.values().find_map(|child| integer_field(child, keys))
+        }
+        Value::Array(items) => items.iter().find_map(|child| integer_field(child, keys)),
+        _ => None,
+    }
+}
+
+fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
+    match value {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(found) = map.get(*key).and_then(Value::as_bool) {
+                    return Some(found);
+                }
+            }
+            map.values().find_map(|child| bool_field(child, keys))
+        }
+        Value::Array(items) => items.iter().find_map(|child| bool_field(child, keys)),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CheckOutcome {
+    PreExecution,
+    Passing,
+    Failing,
+}
+
+fn check_outcome(payload: &Value, command: &str, err_sig: &str) -> CheckOutcome {
+    let exit_code = integer_field(
+        payload,
+        &["exit_code", "returncode", "exitCode", "status_code"],
+    );
+    let explicit_ok = bool_field(payload, &["passed", "ok", "success"]);
+    let status_str = first(payload, "status").map(str::to_ascii_lowercase);
+    if !err_sig.is_empty()
+        || exit_code.is_some_and(|code| code != 0)
+        || explicit_ok == Some(false)
+        || matches!(
+            status_str.as_deref(),
+            Some("failed" | "failure" | "error" | "errored")
+        )
+    {
+        CheckOutcome::Failing
+    } else if !shell::polling(command)
+        && (exit_code == Some(0)
+            || explicit_ok == Some(true)
+            || matches!(
+                status_str.as_deref(),
+                Some("passed" | "pass" | "ok" | "success" | "succeeded")
+            ))
+    {
+        CheckOutcome::Passing
+    } else {
+        CheckOutcome::PreExecution
+    }
+}
+
+fn combine_command_error_signature(normalized_cmd: &str, err_sig: &str) -> String {
+    if normalized_cmd.is_empty() && err_sig.is_empty() {
+        String::new()
+    } else if err_sig.is_empty() {
+        format!("norm:{normalized_cmd}")
+    } else if normalized_cmd.is_empty() {
+        format!("err:{err_sig}")
+    } else {
+        format!("norm:{normalized_cmd}\0{err_sig}")
+    }
+}
+
+fn is_check_event(payload: &Value) -> bool {
+    let has_cmd = first(payload, "command").is_some() || first(payload, "cmd").is_some();
+    if !has_cmd {
+        return false;
+    }
+    let tools = strings(payload, &["tool_name"]);
+    (!tools.is_empty() && allowed_tool(payload, CHECK_TOOLS))
+        || integer_field(
+            payload,
+            &["exit_code", "returncode", "exitCode", "status_code"],
+        )
+        .is_some()
+        || bool_field(payload, &["passed", "ok", "success"]).is_some()
+        || first(payload, "status").is_some()
+        || !normalized_error_signature(payload).is_empty()
+}
+
 fn payload_noop(role: &str, payload: &Value) -> bool {
     match role {
         "bash-guard" => first(payload, "command").is_none() && first(payload, "cmd").is_none(),
-        "naming-check" | "edit-loop" => !allowed_tool(payload, EDIT_TOOLS),
+        "naming-check" => !allowed_tool(payload, EDIT_TOOLS),
+        "edit-loop" => !allowed_tool(payload, EDIT_TOOLS) && !is_check_event(payload),
         _ => false,
     }
 }
@@ -208,6 +326,97 @@ fn parse_payload(raw: &[u8]) -> Value {
         .unwrap_or_else(|| json!({}))
 }
 
+/// Normalizes a shell command into a canonical signature so trivial output paging/redirection
+/// tweaks (`2>&1`, `| head -n 20`, extra whitespace) still register as repeated retries.
+pub fn normalize_command_signature(command: &str) -> String {
+    let mut trimmed = command.trim();
+    loop {
+        let next = trimmed.trim_end();
+        let stripped = if let Some(idx) = next.rfind('|') {
+            let tail = next[idx + 1..].trim_start();
+            let head_word = tail.split_whitespace().next().unwrap_or("");
+            if [
+                "head", "tail", "cat", "less", "more", "wc", "grep", "rg", "tee",
+            ]
+            .contains(&head_word)
+            {
+                &next[..idx]
+            } else {
+                next
+            }
+        } else {
+            next
+        };
+        let without_redir = stripped
+            .trim_end()
+            .strip_suffix("2>&1")
+            .or_else(|| stripped.trim_end().strip_suffix("1>/dev/null"))
+            .or_else(|| stripped.trim_end().strip_suffix(">/dev/null"))
+            .map(str::trim_end);
+        match without_redir {
+            Some(shorter) if shorter.len() < next.len() => trimmed = shorter,
+            _ if stripped.len() < next.len() => trimmed = stripped,
+            _ => break,
+        }
+    }
+    trimmed.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn normalized_error_signature(payload: &Value) -> String {
+    for key in ["error", "stderr", "last_error", "tool_error"] {
+        if let Some(raw) = first(payload, key) {
+            let sig: String = raw
+                .split_whitespace()
+                .filter(|w| !w.chars().all(|c| c.is_ascii_digit()))
+                .take(12)
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !sig.is_empty() {
+                return sig;
+            }
+        }
+    }
+    String::new()
+}
+
+fn diagnostic_hint(normalized: &str, err_sig: &str, debugger_name: &str) -> String {
+    let lower = normalized.to_ascii_lowercase();
+    let base = if lower.contains("cargo test")
+        || lower.contains("cargo check")
+        || lower.contains("cargo clippy")
+    {
+        "Hint: isolate one failing test with `-- --nocapture` or inspect the first compiler diagnostic instead of rerunning the full workspace."
+    } else if lower.contains("phpunit")
+        || lower.contains("pest")
+        || lower.contains("phpstan")
+        || lower.contains("composer")
+    {
+        "Hint: narrow to the failing test/file (`--filter <Name>` or single path) and verify dependencies/config before retrying."
+    } else if lower.contains("pytest") || lower.contains("python") {
+        "Hint: isolate the failing test with `-k <name> --tb=short` to inspect the underlying assertion or traceback."
+    } else if lower.contains("npm ")
+        || lower.contains("pnpm ")
+        || lower.contains("yarn ")
+        || lower.contains("vitest")
+        || lower.contains("jest")
+        || lower.contains("tsc")
+    {
+        "Hint: run a single test file or standalone typecheck to read the first failing diagnostic cleanly."
+    } else if lower.starts_with("git ") {
+        "Hint: inspect `git status` and `git diff --stat` to resolve conflicts or hooks before retrying."
+    } else {
+        "Hint: narrow the scope, read full stderr without truncation, or check recent edits before retrying."
+    };
+    if err_sig.is_empty() {
+        format!("{base} Escalate to {debugger_name} if the failure repeats.")
+    } else {
+        format!(
+            "{base} Repeated error signature: `{}`. Escalate to {debugger_name} if unresolved.",
+            err_sig.chars().take(80).collect::<String>()
+        )
+    }
+}
+
 fn bash_guard(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
     let command = strings(payload, &["command", "cmd"]).join("\n");
     if command.is_empty() {
@@ -223,22 +432,52 @@ fn bash_guard(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
     if shell::polling(&command) {
         return Ok(GuardOutput::default());
     }
-    let count = match counters::advance(root, payload, "cmd", &command, true) {
+    let normalized = normalize_command_signature(&command);
+    let err_sig = normalized_error_signature(payload);
+    if check_outcome(payload, &command, &err_sig) == CheckOutcome::Passing {
+        let _ = counters::reset(root, &counters::session_id(payload));
+        return Ok(GuardOutput::default());
+    }
+    let norm_identity = combine_command_error_signature(&normalized, &err_sig);
+    let _ = counters::record_signature(root, payload, &norm_identity);
+    let exact_identity = if err_sig.is_empty() {
+        command.clone()
+    } else {
+        format!("{command}\0{err_sig}")
+    };
+    let exact_count = match counters::advance(root, payload, "cmd", &exact_identity, true) {
         Ok(c) => c,
         Err(_) => return Ok(GuardOutput::default()),
     };
-    let hint = debugger_hint(host);
+    let norm_count = if normalized != command.trim() || !err_sig.is_empty() {
+        counters::advance(root, payload, "cmd", &norm_identity, true).unwrap_or(exact_count)
+    } else {
+        exact_count
+    };
+    let count = exact_count.max(norm_count);
+    let debugger = debugger_hint(host);
+    let hint = diagnostic_hint(&normalized, &err_sig, debugger);
     if count >= loaded.policy.loop_thresholds.cmd_block {
         return Ok(GuardOutput::error(
             2,
             format!(
-                "BLOCKED: this exact command has run {count} times this session.\n   Repeating it again is not a new attempt. Either change the\n   command (narrow it, add the failing case, read the output\n   differently) or escalate to {hint} for a root cause."
+                "BLOCKED: this {} has run {count} times this session.\n   Repeating it again is not a new attempt. Either change the\n   command (narrow it, add the failing case, read the output\n   differently) or escalate to {debugger} for a root cause.\n   {hint}",
+                if exact_count >= loaded.policy.loop_thresholds.cmd_block {
+                    "exact command"
+                } else {
+                    "normalized command signature"
+                }
             ),
         ));
     }
     if count >= loaded.policy.loop_thresholds.cmd_warn {
+        let kind_label = if exact_count >= loaded.policy.loop_thresholds.cmd_warn {
+            "exact command"
+        } else {
+            "command signature"
+        };
         let message = format!(
-            "WARNING: this exact command has run {count} times this session. If it keeps failing, use {hint} instead of another rerun."
+            "WARNING: this {kind_label} has run {count} times this session. {hint}"
         );
         return if host == "cursor" {
             Ok(GuardOutput::error(1, message))
@@ -274,7 +513,91 @@ fn patch_paths(value: &Value, paths: &mut BTreeSet<String>) {
     }
 }
 
-fn skill_prefixes(root: &Path, host: &str) -> Vec<String> {
+fn memory_filename_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"^MEM-[0-9]{4,}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+            .expect("constant memory filename regex")
+    })
+}
+
+fn task_directory_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"^TASK-[0-9]{3,}$").expect("constant task directory regex")
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct EntryStamp {
+    mtime_ns: i128,
+    ctime_ns: i128,
+    size: u64,
+    ino: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SkillDirCacheEntry {
+    skills_dirs: Vec<(String, Option<EntryStamp>)>,
+    prefixes: Vec<String>,
+}
+
+fn entry_stamp(path: &Path, expect_dir: bool) -> Option<(EntryStamp, i128)> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    if custody::linked(&meta)
+        || (expect_dir && !meta.is_dir())
+        || (!expect_dir && !meta.is_file())
+    {
+        return None;
+    }
+    let mtime_ns = i128::try_from(
+        meta.modified()
+            .ok()?
+            .duration_since(UNIX_EPOCH)
+            .ok()?
+            .as_nanos(),
+    )
+    .ok()?;
+    #[cfg(unix)]
+    let (ctime_ns, size, ino) = {
+        use std::os::unix::fs::MetadataExt;
+        let ctime = i128::from(meta.ctime()) * 1_000_000_000 + i128::from(meta.ctime_nsec());
+        (ctime, meta.size(), meta.ino())
+    };
+    #[cfg(not(unix))]
+    let (ctime_ns, size, ino) = (mtime_ns, meta.len(), 0u64);
+    let settled = mtime_ns.max(ctime_ns);
+    Some((
+        EntryStamp {
+            mtime_ns,
+            ctime_ns,
+            size,
+            ino,
+        },
+        settled,
+    ))
+}
+
+fn current_unix_ns() -> i128 {
+    i128::try_from(
+        std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    )
+    .unwrap_or(0)
+}
+
+fn write_settled_cache_file(cache_path: &Path, bytes: &[u8]) {
+    if cache_path.parent().is_some_and(|parent| {
+        fs::symlink_metadata(parent)
+            .is_ok_and(|meta| !custody::linked(&meta) && meta.is_dir())
+    }) && custody::admit_directory(cache_path.parent().unwrap_or(cache_path)).is_ok()
+    {
+        let _ = custody::atomic_write(cache_path, bytes);
+    }
+}
+
+fn skill_dirs(root: &Path, host: &str) -> Vec<PathBuf> {
     let primary = match host {
         "cursor" => root.join(".cursor/skills"),
         "codex" => root.join(".agents/skills"),
@@ -289,6 +612,12 @@ fn skill_prefixes(root: &Path, host: &str) -> Vec<String> {
     ];
     let mut seen = BTreeSet::new();
     dirs.retain(|d| seen.insert(d.clone()));
+    dirs
+}
+
+fn scan_skill_prefixes(dirs: &[PathBuf]) -> Vec<String> {
+    #[cfg(test)]
+    bump_skill_dir_scans();
     let mut prefixes = Vec::new();
     for dir in dirs {
         if let Ok(entries) = fs::read_dir(dir) {
@@ -307,6 +636,71 @@ fn skill_prefixes(root: &Path, host: &str) -> Vec<String> {
     prefixes
 }
 
+fn skill_prefixes_with_now(dirs: &[PathBuf], cache_file: Option<&Path>, now_ns: i128) -> Vec<String> {
+    static CACHE: OnceLock<Mutex<BTreeMap<Vec<PathBuf>, SkillDirCacheEntry>>> = OnceLock::new();
+    let mut dir_stamps = Vec::with_capacity(dirs.len());
+    let mut max_settled = 0i128;
+    let mut any_existing = false;
+    for dir in dirs {
+        if let Some((stamp, settled_ns)) = entry_stamp(dir, true) {
+            any_existing = true;
+            max_settled = max_settled.max(settled_ns);
+            dir_stamps.push((dir.to_string_lossy().into_owned(), Some(stamp)));
+        } else {
+            dir_stamps.push((dir.to_string_lossy().into_owned(), None));
+        }
+    }
+    if !any_existing {
+        return Vec::new();
+    }
+    let racy_settled = now_ns > SKILL_CACHE_RACY_NS && now_ns - max_settled >= SKILL_CACHE_RACY_NS;
+    let memory = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if racy_settled
+        && let Ok(guard) = memory.lock()
+        && let Some(entry) = guard.get(dirs)
+        && entry.skills_dirs == dir_stamps
+    {
+        return entry.prefixes.clone();
+    }
+    if racy_settled
+        && let Some(cache_path) = cache_file
+        && custody::owned_by_current_user(cache_path)
+        && let Ok(raw) = custody::read_regular(cache_path, 512 * 1024)
+        && let Ok(entry) = serde_json::from_slice::<SkillDirCacheEntry>(&raw)
+        && entry.skills_dirs == dir_stamps
+    {
+        if let Ok(mut guard) = memory.lock() {
+            guard.insert(dirs.to_vec(), entry.clone());
+        }
+        return entry.prefixes;
+    }
+
+    let prefixes = scan_skill_prefixes(dirs);
+    if racy_settled {
+        let entry = SkillDirCacheEntry {
+            skills_dirs: dir_stamps,
+            prefixes: prefixes.clone(),
+        };
+        if let Ok(mut guard) = memory.lock() {
+            guard.insert(dirs.to_vec(), entry.clone());
+        }
+        if let Some(cache_path) = cache_file
+            && let Ok(bytes) = serde_json::to_vec(&entry)
+        {
+            write_settled_cache_file(cache_path, &bytes);
+        }
+    }
+    prefixes
+}
+
+fn skill_prefixes(root: &Path, host: &str) -> Vec<String> {
+    let dirs = skill_dirs(root, host);
+    let cache_file = counters::directory(root)
+        .ok()
+        .map(|dir| dir.join(format!("skill-naming-cache-{host}.json")));
+    skill_prefixes_with_now(&dirs, cache_file.as_deref(), current_unix_ns())
+}
+
 /// Validate one list of file paths against naming conventions & policy globs.
 pub fn validate_naming_paths(
     root: &Path,
@@ -321,9 +715,9 @@ pub fn validate_naming_paths(
         .iter()
         .filter_map(|g| policy::compile_glob(g).ok())
         .collect();
-    let prefixes = skill_prefixes(root, host);
-    let memory_filename = regex::Regex::new(r"^MEM-[0-9]{4,}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")?;
-    let task_directory = regex::Regex::new(r"^TASK-[0-9]{3,}$")?;
+    let mut cached_prefixes: Option<Vec<String>> = None;
+    let memory_filename = memory_filename_re();
+    let task_directory = task_directory_re();
     let root_prefix = format!("{}/", root.display());
 
     for path in paths {
@@ -364,13 +758,13 @@ pub fn validate_naming_paths(
                     )));
                 }
             }
-            if !prefixes.is_empty()
-                && !["README.md", "CHANGELOG.md", "MANIFEST.md"].contains(&file)
-                && !prefixes.iter().any(|prefix| file.starts_with(prefix))
-            {
-                return Ok(Some(format!(
-                    "'{file}' must start with a discovered skill name followed by '-'"
-                )));
+            if !["README.md", "CHANGELOG.md", "MANIFEST.md"].contains(&file) {
+                let prefixes = cached_prefixes.get_or_insert_with(|| skill_prefixes(root, host));
+                if !prefixes.is_empty() && !prefixes.iter().any(|prefix| file.starts_with(prefix)) {
+                    return Ok(Some(format!(
+                        "'{file}' must start with a discovered skill name followed by '-'"
+                    )));
+                }
             }
         }
     }
@@ -402,6 +796,21 @@ fn naming_check(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput>
 }
 
 fn edit_loop(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
+    if is_check_event(payload) {
+        let command = strings(payload, &["command", "cmd"]).join("\n");
+        let err_sig = normalized_error_signature(payload);
+        let normalized = normalize_command_signature(&command);
+        match check_outcome(payload, &command, &err_sig) {
+            CheckOutcome::Passing => {
+                let _ = counters::reset(root, &counters::session_id(payload));
+            }
+            CheckOutcome::Failing | CheckOutcome::PreExecution => {
+                let sig = combine_command_error_signature(&normalized, &err_sig);
+                let _ = counters::record_signature(root, payload, &sig);
+            }
+        }
+        return Ok(GuardOutput::default());
+    }
     if !allowed_tool(payload, EDIT_TOOLS) {
         return Ok(GuardOutput::default());
     }
@@ -429,13 +838,26 @@ fn edit_loop(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
         source_path: None,
         strict_custody: false,
     });
+    let inline_cmd = strings(payload, &["command", "cmd"]).join("\n");
+    let inline_err = normalized_error_signature(payload);
+    let inline_sig =
+        combine_command_error_signature(&normalize_command_signature(&inline_cmd), &inline_err);
+    let active_sig = if !inline_sig.is_empty() {
+        Some(inline_sig)
+    } else {
+        counters::active_signature(root, payload)
+    };
     let warn_at = loaded.policy.loop_thresholds.edit_warn;
     let block_at = loaded.policy.loop_thresholds.edit_block;
     let hint = debugger_hint(host);
     let mut warnings = Vec::new();
     let mut blocked = Vec::new();
     for path in paths {
-        let count = match counters::advance(root, payload, "edit", &path, false) {
+        let identity = match active_sig.as_deref() {
+            Some(sig) => format!("{path}\0{sig}"),
+            None => path.clone(),
+        };
+        let count = match counters::advance(root, payload, "edit", &identity, false) {
             Ok(c) => c,
             Err(_) => continue,
         };
@@ -467,7 +889,182 @@ fn edit_loop(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
     }
 }
 
-fn roster(root: &Path, host: &str, loaded: &LoadedPolicy) -> BTreeMap<String, bool> {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct AgentFileStamp {
+    name: String,
+    stamp: EntryStamp,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct AgentRosterCacheEntry {
+    agents_dir: String,
+    dir_stamp: EntryStamp,
+    files: Vec<AgentFileStamp>,
+    roster: BTreeMap<String, bool>,
+}
+
+fn inspect_agent_roster_dir(
+    path: &Path,
+) -> Result<Option<(EntryStamp, Vec<AgentFileStamp>, i128)>> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    if custody::linked(&meta) || !meta.is_dir() {
+        return Err(GuardError::policy(
+            "Agent roster directory is a symlink or non-directory",
+        ));
+    }
+    let Some((d_stamp, mut max_settled)) = entry_stamp(path, true) else {
+        return Err(GuardError::policy(
+            "Agent roster directory metadata is unsafe or unavailable",
+        ));
+    };
+    let mut entries = fs::read_dir(path)?
+        .filter_map(std::result::Result::ok)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.file_name());
+    let mut file_stamps = Vec::new();
+    for entry in entries {
+        let entry_path = entry.path();
+        if entry_path.extension().is_none_or(|ext| ext != "md")
+            || entry_path
+                .file_name()
+                .is_some_and(|name| name == "README.md")
+        {
+            continue;
+        }
+        let f_meta = fs::symlink_metadata(&entry_path)?;
+        if custody::linked(&f_meta) {
+            return Err(GuardError::policy(format!(
+                "Agent roster entry contains a symlink: {}",
+                entry_path.display()
+            )));
+        }
+        if !f_meta.is_file() {
+            continue;
+        }
+        let Some((f_stamp, f_settled)) = entry_stamp(&entry_path, false) else {
+            return Err(GuardError::policy(format!(
+                "Agent roster file metadata unavailable: {}",
+                entry_path.display()
+            )));
+        };
+        max_settled = max_settled.max(f_settled);
+        let name = entry.file_name().to_string_lossy().into_owned();
+        file_stamps.push(AgentFileStamp {
+            name,
+            stamp: f_stamp,
+        });
+    }
+    Ok(Some((d_stamp, file_stamps, max_settled)))
+}
+
+fn scan_agent_roster(path: &Path) -> Result<BTreeMap<String, bool>> {
+    #[cfg(test)]
+    bump_roster_dir_scans();
+    let mut result = BTreeMap::new();
+    let mut entries = fs::read_dir(path)?
+        .filter_map(std::result::Result::ok)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let p = entry.path();
+        if p.extension().is_none_or(|ext| ext != "md")
+            || p.file_name().is_some_and(|name| name == "README.md")
+        {
+            continue;
+        }
+        let meta = fs::symlink_metadata(&p)?;
+        if custody::linked(&meta) {
+            return Err(GuardError::policy(format!(
+                "Agent roster entry contains a symlink: {}",
+                p.display()
+            )));
+        }
+        let Ok(text) = custody::read_text(&p, 256 * 1024) else {
+            continue;
+        };
+        let mut lines = text.lines();
+        if lines.next() != Some("---") {
+            continue;
+        }
+        let front: Vec<&str> = lines.take_while(|line| *line != "---").collect();
+        let field = |key: &str| {
+            front.iter().find_map(|line| {
+                line.strip_prefix(&format!("{key}:"))
+                    .map(|v| v.trim().replace('"', ""))
+            })
+        };
+        if let Some(name) = field("name").filter(|n| !n.is_empty()) {
+            let writes = field("writes").as_deref() == Some("true");
+            result
+                .entry(name)
+                .and_modify(|prev| *prev |= writes)
+                .or_insert(writes);
+        }
+    }
+    Ok(result)
+}
+
+fn roster_with_now(
+    path: &Path,
+    cache_file: Option<&Path>,
+    now_ns: i128,
+) -> Result<BTreeMap<String, bool>> {
+    static ROSTER_CACHE: OnceLock<Mutex<BTreeMap<PathBuf, AgentRosterCacheEntry>>> =
+        OnceLock::new();
+    let Some((d_stamp, file_stamps, max_settled)) = inspect_agent_roster_dir(path)? else {
+        return Ok(BTreeMap::new());
+    };
+    let key_str = path.to_string_lossy().into_owned();
+    let racy_settled = now_ns > SKILL_CACHE_RACY_NS && now_ns - max_settled >= SKILL_CACHE_RACY_NS;
+    let memory = ROSTER_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if racy_settled
+        && let Ok(guard) = memory.lock()
+        && let Some(entry) = guard.get(path)
+        && entry.dir_stamp == d_stamp
+        && entry.files == file_stamps
+    {
+        return Ok(entry.roster.clone());
+    }
+    if racy_settled
+        && let Some(cache_path) = cache_file
+        && custody::owned_by_current_user(cache_path)
+        && let Ok(raw) = custody::read_regular(cache_path, 512 * 1024)
+        && let Ok(entry) = serde_json::from_slice::<AgentRosterCacheEntry>(&raw)
+        && entry.agents_dir == key_str
+        && entry.dir_stamp == d_stamp
+        && entry.files == file_stamps
+    {
+        if let Ok(mut guard) = memory.lock() {
+            guard.insert(path.to_path_buf(), entry.clone());
+        }
+        return Ok(entry.roster);
+    }
+
+    let result = scan_agent_roster(path)?;
+    if racy_settled {
+        let entry = AgentRosterCacheEntry {
+            agents_dir: key_str,
+            dir_stamp: d_stamp,
+            files: file_stamps,
+            roster: result.clone(),
+        };
+        if let Ok(mut guard) = memory.lock() {
+            guard.insert(path.to_path_buf(), entry.clone());
+        }
+        if let Some(cache_path) = cache_file
+            && let Ok(bytes) = serde_json::to_vec(&entry)
+        {
+            write_settled_cache_file(cache_path, &bytes);
+        }
+    }
+    Ok(result)
+}
+
+fn roster(root: &Path, host: &str, loaded: &LoadedPolicy) -> Result<BTreeMap<String, bool>> {
     let mut result = BTreeMap::new();
     for name in &loaded.policy.subagent_gate.allowed_agents {
         result.entry(name.clone()).or_insert(false);
@@ -480,40 +1077,17 @@ fn roster(root: &Path, host: &str, loaded: &LoadedPolicy) -> BTreeMap<String, bo
     } else {
         ".claude/agents"
     });
-    if dir.is_dir()
-        && let Ok(entries) = fs::read_dir(dir)
-    {
-        for entry in entries.filter_map(std::result::Result::ok) {
-            let p = entry.path();
-            if p.extension().is_none_or(|ext| ext != "md")
-                || p.file_name().is_some_and(|name| name == "README.md")
-            {
-                continue;
-            }
-            let Ok(text) = custody::read_text(&p, 256 * 1024) else {
-                continue;
-            };
-            let mut lines = text.lines();
-            if lines.next() != Some("---") {
-                continue;
-            }
-            let front: Vec<&str> = lines.take_while(|line| *line != "---").collect();
-            let field = |key: &str| {
-                front.iter().find_map(|line| {
-                    line.strip_prefix(&format!("{key}:"))
-                        .map(|v| v.trim().replace('"', ""))
-                })
-            };
-            if let Some(name) = field("name").filter(|n| !n.is_empty()) {
-                let writes = field("writes").as_deref() == Some("true");
-                result
-                    .entry(name)
-                    .and_modify(|prev| *prev |= writes)
-                    .or_insert(writes);
-            }
-        }
+    let cache_file = counters::directory(root)
+        .ok()
+        .map(|folder| folder.join(format!("agent-roster-cache-{host}.json")));
+    let discovered = roster_with_now(&dir, cache_file.as_deref(), current_unix_ns())?;
+    for (name, writes) in discovered {
+        result
+            .entry(name)
+            .and_modify(|prev| *prev |= writes)
+            .or_insert(writes);
     }
-    result
+    Ok(result)
 }
 
 fn safe_type(value: &str) -> String {
@@ -589,7 +1163,10 @@ fn subagent_gate(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput
     let Some(agent) = first(payload, "subagent_type").or_else(|| first(payload, "agent_type")) else {
         return gate_response(host, true, "");
     };
-    let map = roster(root, host, &loaded);
+    let map = match roster(root, host, &loaded) {
+        Ok(map) => map,
+        Err(error) => return gate_response(host, false, &format!("BLOCKED: {error}")),
+    };
     if map.is_empty() {
         return gate_response(host, true, "");
     }
@@ -677,6 +1254,7 @@ pub fn check_command(
     let loaded = policy::load_policy(root, preset_override)?;
     let shell_policy = shell::Policy::from_loaded(&loaded);
     let outcome = shell::validate_in_repo(command, &shell_policy, Some(root));
+    let read_only = shell::is_read_only_cli(command);
     match outcome {
         Ok(None) => Ok(json!({
             "allowed": true,
@@ -685,6 +1263,7 @@ pub fn check_command(
             "preset": loaded.preset.as_str(),
             "root": root.display().to_string(),
             "polling_exempt": shell::polling(command),
+            "read_only": read_only,
         })),
         Ok(Some(category)) => Ok(json!({
             "allowed": false,
@@ -693,6 +1272,7 @@ pub fn check_command(
             "preset": loaded.preset.as_str(),
             "root": root.display().to_string(),
             "polling_exempt": false,
+            "read_only": false,
         })),
         Err(error) => Ok(json!({
             "allowed": false,
@@ -701,6 +1281,346 @@ pub fn check_command(
             "preset": loaded.preset.as_str(),
             "root": root.display().to_string(),
             "polling_exempt": false,
+            "read_only": false,
         })),
+    }
+}
+
+#[cfg(test)]
+mod smart_loop_breaker_tests {
+    use super::*;
+
+    #[test]
+    fn normalized_bash_signature_warns_with_diagnostic_hints_before_blocking_at_12() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join(".git")).unwrap();
+
+        let session = format!("smartloop{}", std::process::id());
+        let variants = [
+            "cargo test foo --lib | head -n 20",
+            "cargo test foo --lib 2>&1 | tail -n 10",
+            "cargo   test   foo   --lib >/dev/null",
+        ];
+
+        // 5 invocations produce zero warning.
+        for i in 0..5 {
+            let cmd = variants[i % variants.len()];
+            let payload = json!({
+                "session_id": session,
+                "tool_name": "Bash",
+                "command": cmd,
+                "stderr": "error[E0308]: mismatched types"
+            });
+            let out = hook_execute(
+                Some(root),
+                Some("claude"),
+                "bash-guard",
+                &serde_json::to_vec(&payload).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(out.code, 0, "attempt {i} should pass: {out:?}");
+            assert!(out.stdout.is_empty(), "attempt {i} should be silent: {out:?}");
+        }
+
+        // Attempts 6..=11 emit deterministic diagnostic hint before blocking.
+        for i in 6..=11 {
+            let cmd = variants[i % variants.len()];
+            let payload = json!({
+                "session_id": session,
+                "tool_name": "Bash",
+                "command": cmd,
+                "stderr": "error[E0308]: mismatched types"
+            });
+            let out = hook_execute(
+                Some(root),
+                Some("claude"),
+                "bash-guard",
+                &serde_json::to_vec(&payload).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(out.code, 0, "attempt {i} should warn: {out:?}");
+            let stdout = String::from_utf8(out.stdout).unwrap();
+            assert!(stdout.contains("WARNING:"), "{stdout}");
+            assert!(stdout.contains("Hint:") && stdout.contains("--nocapture"), "{stdout}");
+            assert!(stdout.contains("mismatched types"), "{stdout}");
+        }
+
+        // Attempt 12 blocks cleanly.
+        let payload_12 = json!({
+            "session_id": session,
+            "tool_name": "Bash",
+            "command": variants[0],
+            "stderr": "error[E0308]: mismatched types"
+        });
+        let blocked = hook_execute(
+            Some(root),
+            Some("claude"),
+            "bash-guard",
+            &serde_json::to_vec(&payload_12).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(blocked.code, 2);
+        let stderr = String::from_utf8(blocked.stderr).unwrap();
+        assert!(stderr.contains("BLOCKED:") && stderr.contains("Hint:"), "{stderr}");
+        let _ = counters::reset(root, &session);
+    }
+
+    #[test]
+    fn file_naming_defers_non_markdown_and_reuses_settled_skill_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let skills = root.join(".claude/skills");
+        fs::create_dir_all(skills.join("alpha-skill")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
+
+        let (_, settled_ns) = entry_stamp(&skills, true).unwrap();
+        let cache_dir = root.join("cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+        let cache_file = cache_dir.join("skill-naming-cache-claude.json");
+        let dirs = skill_dirs(root, "claude");
+
+        SKILL_DIR_SCANS.with(|c| c.set(0));
+        // Inside racy window (< 2s) always scans and avoids persisting stale cache.
+        let racy_prefixes =
+            skill_prefixes_with_now(&dirs, Some(&cache_file), settled_ns + SKILL_CACHE_RACY_NS - 1);
+        assert_eq!(racy_prefixes, vec!["alpha-skill-".to_string()]);
+        assert_eq!(SKILL_DIR_SCANS.with(|c| c.get()), 1);
+        assert!(!cache_file.exists());
+
+        // Outside racy window: first call scans once and caches; second call hits cache with 0 scans!
+        let settled_now = settled_ns + SKILL_CACHE_RACY_NS + 1;
+        let first = skill_prefixes_with_now(&dirs, Some(&cache_file), settled_now);
+        assert_eq!(first, vec!["alpha-skill-".to_string()]);
+        assert_eq!(SKILL_DIR_SCANS.with(|c| c.get()), 2);
+        assert!(cache_file.is_file());
+
+        let second = skill_prefixes_with_now(&dirs, Some(&cache_file), settled_now + 500);
+        assert_eq!(second, first);
+        assert_eq!(SKILL_DIR_SCANS.with(|c| c.get()), 2);
+
+        // Editing a non-Markdown file through naming-check skips skill dir scanning altogether.
+        let payload = json!({
+            "session_id": "namingskip",
+            "tool_name": "Edit",
+            "file_path": root.join("src/App.php")
+        });
+        let before_scans = SKILL_DIR_SCANS.with(|c| c.get());
+        let out = hook_execute(
+            Some(root),
+            Some("claude"),
+            "naming-check",
+            &serde_json::to_vec(&payload).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(out.code, 0);
+        assert_eq!(SKILL_DIR_SCANS.with(|c| c.get()), before_scans);
+    }
+
+    #[test]
+    fn edit_loop_discriminates_signatures_resets_on_passing_checks_and_isolates_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join(".git")).unwrap();
+
+        let sess_a = format!("loopA{}", std::process::id());
+        let sess_b = format!("loopB{}", std::process::id());
+        let target_file = root.join("src/Service.php").to_string_lossy().into_owned();
+
+        // Fail under normalized signature A (`cargo test foo`), edit 6 times -> silent.
+        let fail_a = json!({
+            "session_id": sess_a,
+            "tool_name": "Bash",
+            "command": "cargo test foo",
+            "exit_code": 1,
+            "stderr": "error[E0308]: mismatch"
+        });
+        hook_execute(
+            Some(root),
+            Some("claude"),
+            "bash-guard",
+            &serde_json::to_vec(&fail_a).unwrap(),
+        )
+        .unwrap();
+        let edit_payload = json!({
+            "session_id": sess_a,
+            "tool_name": "Edit",
+            "file_path": target_file
+        });
+        for i in 0..6 {
+            let out = hook_execute(
+                Some(root),
+                Some("claude"),
+                "edit-loop",
+                &serde_json::to_vec(&edit_payload).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(out.code, 0);
+            assert!(out.stdout.is_empty(), "edit {i} under sig A should be silent");
+        }
+
+        // Switching to distinct signature B tracks `(file, sig B)` independently.
+        let fail_b = json!({
+            "session_id": sess_a,
+            "tool_name": "Bash",
+            "command": "cargo test bar",
+            "exit_code": 1,
+            "stderr": "error[E0425]: missing name"
+        });
+        hook_execute(
+            Some(root),
+            Some("claude"),
+            "bash-guard",
+            &serde_json::to_vec(&fail_b).unwrap(),
+        )
+        .unwrap();
+        for i in 0..6 {
+            let out = hook_execute(
+                Some(root),
+                Some("claude"),
+                "edit-loop",
+                &serde_json::to_vec(&edit_payload).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(out.code, 0);
+            assert!(out.stdout.is_empty(), "edit {i} under sig B should be silent");
+        }
+
+        // 7th edit under sig B warns cleanly.
+        let warn = hook_execute(
+            Some(root),
+            Some("claude"),
+            "edit-loop",
+            &serde_json::to_vec(&edit_payload).unwrap(),
+        )
+        .unwrap();
+        assert!(!warn.stdout.is_empty(), "7th edit under same sig should warn");
+
+        // Passing check via PostToolUse edit-loop resets session counters.
+        let pass_check = json!({
+            "session_id": sess_a,
+            "tool_name": "Bash",
+            "command": "cargo test bar",
+            "exit_code": 0
+        });
+        let pass_out = hook_execute(
+            Some(root),
+            Some("claude"),
+            "edit-loop",
+            &serde_json::to_vec(&pass_check).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(pass_out.code, 0);
+        for i in 0..6 {
+            let out = hook_execute(
+                Some(root),
+                Some("claude"),
+                "edit-loop",
+                &serde_json::to_vec(&edit_payload).unwrap(),
+            )
+            .unwrap();
+            assert!(out.stdout.is_empty(), "post-reset edit {i} must start fresh");
+        }
+
+        // Edits in session B must not reset session A's bash counter.
+        let cmd_a = json!({"session_id": sess_a, "tool_name": "Bash", "command": "phpunit --filter A"});
+        for _ in 0..6 {
+            hook_execute(
+                Some(root),
+                Some("claude"),
+                "bash-guard",
+                &serde_json::to_vec(&cmd_a).unwrap(),
+            )
+            .unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        let edit_b = json!({"session_id": sess_b, "tool_name": "Edit", "file_path": target_file});
+        hook_execute(
+            Some(root),
+            Some("claude"),
+            "edit-loop",
+            &serde_json::to_vec(&edit_b).unwrap(),
+        )
+        .unwrap();
+        let next_a = hook_execute(
+            Some(root),
+            Some("claude"),
+            "bash-guard",
+            &serde_json::to_vec(&cmd_a).unwrap(),
+        )
+        .unwrap();
+        let stdout_a = String::from_utf8_lossy(&next_a.stdout);
+        assert!(
+            stdout_a.contains("WARNING:"),
+            "session B edit leaked into session A reset: {stdout_a}"
+        );
+        let _ = counters::reset(root, &sess_a);
+        let _ = counters::reset(root, &sess_b);
+    }
+
+    #[test]
+    fn agent_roster_reuses_settled_cache_invalidates_on_edit_and_fails_closed_on_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let agents = root.join(".claude/agents");
+        fs::create_dir_all(&agents).unwrap();
+        let cache_dir = root.join("cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+        let reviewer = agents.join("reviewer-agent.md");
+        fs::write(&reviewer, "---\nname: reviewer-agent\nwrites: false\n---\n").unwrap();
+        let cache_file = cache_dir.join("agent-roster-cache-claude.json");
+
+        let (_, _, settled_ns) = inspect_agent_roster_dir(&agents).unwrap().unwrap();
+        ROSTER_DIR_SCANS.with(|c| c.set(0));
+
+        // Inside SKILL_CACHE_RACY_NS -> always scans live and never writes cache.
+        let racy = roster_with_now(
+            &agents,
+            Some(&cache_file),
+            settled_ns + SKILL_CACHE_RACY_NS - 1,
+        )
+        .unwrap();
+        assert_eq!(racy.get("reviewer-agent"), Some(&false));
+        assert_eq!(ROSTER_DIR_SCANS.with(|c| c.get()), 1);
+        assert!(!cache_file.exists());
+
+        // Settled beyond SKILL_CACHE_RACY_NS -> 1st call populates cache, 2nd hits with 0 scans.
+        let settled_now = settled_ns + SKILL_CACHE_RACY_NS + 1;
+        let first = roster_with_now(&agents, Some(&cache_file), settled_now).unwrap();
+        assert_eq!(first, racy);
+        assert_eq!(ROSTER_DIR_SCANS.with(|c| c.get()), 2);
+        assert!(cache_file.is_file());
+
+        let second = roster_with_now(&agents, Some(&cache_file), settled_now + 500).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(ROSTER_DIR_SCANS.with(|c| c.get()), 2);
+
+        // In-place file edit invalidates cache immediately.
+        fs::write(&reviewer, "---\nname: reviewer-agent\nwrites: true\n---\n").unwrap();
+        let (_, _, settled_edit) = inspect_agent_roster_dir(&agents).unwrap().unwrap();
+        let third = roster_with_now(
+            &agents,
+            Some(&cache_file),
+            settled_edit + SKILL_CACHE_RACY_NS + 1,
+        )
+        .unwrap();
+        assert_eq!(third.get("reviewer-agent"), Some(&true));
+        assert_eq!(ROSTER_DIR_SCANS.with(|c| c.get()), 3);
+
+        // Symlinked entry inside agents dir fails closed.
+        #[cfg(unix)]
+        {
+            let target = root.join("outside.md");
+            fs::write(&target, "---\nname: evil\nwrites: false\n---\n").unwrap();
+            std::os::unix::fs::symlink(&target, agents.join("evil-agent.md")).unwrap();
+            assert!(
+                roster_with_now(
+                    &agents,
+                    Some(&cache_file),
+                    settled_edit + SKILL_CACHE_RACY_NS + 2
+                )
+                .is_err()
+            );
+        }
     }
 }

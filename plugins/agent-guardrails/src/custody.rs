@@ -79,11 +79,19 @@ pub fn absolute_lexical(path: &Path) -> Result<PathBuf> {
     Ok(normalize_lexical(&joined))
 }
 
-/// Return true when `path` is a packaged `agent-guardrails` plugin directory.
+/// Return true when `path` is a packaged plugin or plugin-cache directory.
 pub fn is_plugin_dir(path: &Path) -> bool {
-    (path.join(".codex-plugin/plugin.json").is_file()
-        || path.join(".claude-plugin/plugin.json").is_file())
-        && path.join("bin/guardrails").is_file()
+    if path.join(".codex-plugin/plugin.json").is_file()
+        || path.join(".claude-plugin/plugin.json").is_file()
+        || (path.join(".mcp.json").is_file() && path.join("bin/guardrails").is_file())
+    {
+        return true;
+    }
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    normalized.ends_with(".codex/plugins/cache")
+        || normalized.contains(".codex/plugins/cache/")
+        || normalized.ends_with(".claude/plugins/cache")
+        || normalized.contains(".claude/plugins/cache/")
 }
 
 /// Return true when `start` lies inside a packaged plugin directory (before reaching `.git`).

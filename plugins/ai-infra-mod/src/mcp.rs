@@ -151,6 +151,7 @@ impl Drop for BackendProcess {
 #[derive(Clone)]
 struct ToolMeta {
     kind: BackendKind,
+    backend_tool_name: String,
     schema_props: BTreeSet<String>,
 }
 
@@ -180,10 +181,14 @@ fn enrich_annotations(name: &str, existing: Option<&Value>) -> Value {
             | "system_locate"
             | "system_impact"
             | "system_run_status"
+            | "system_graph_status"
             | "orch_session_status"
             | "orch_context_draft"
             | "orch_delivery_preview"
-            | "orch_working_memory_read" => (true, false),
+            | "orch_working_memory_read"
+            | "omnigraph_status"
+            | "omnigraph_atoms"
+            | "omnigraph_branches_diff" => (true, false),
             "system_execute" | "orch_session_cancel" => (false, true),
             _ => (base_ro.unwrap_or(false), base_destr.unwrap_or(false)),
         },
@@ -198,7 +203,7 @@ fn enrich_annotations(name: &str, existing: Option<&Value>) -> Value {
 fn mod_status_tool() -> Value {
     json!({
         "name": "mod_status",
-        "description": "Report availability, binary paths, versions, tool counts, and active root containment status across all 5 AI-Infrastructure subsystems (graph-map, system-orchestration, context-graph, skill-foundry, agent-guardrails).",
+        "description": "Report availability, binary paths, versions, tool counts, and active root containment status across all 6 AI-Infrastructure subsystems (graph-map, system-orchestration, context-graph, skill-foundry, agent-guardrails, skillcache).",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -238,7 +243,7 @@ impl Multiplexer {
         for res in results.drain(..) {
             let proc = res?;
             for mut tool in proc.tools.clone() {
-                let name = tool["name"]
+                let backend_tool_name = tool["name"]
                     .as_str()
                     .ok_or_else(|| format!("{} returned nameless tool", proc.kind.binary_name()))?
                     .to_string();
@@ -246,15 +251,36 @@ impl Multiplexer {
                     .as_object()
                     .map(|m| m.keys().cloned().collect::<BTreeSet<_>>())
                     .unwrap_or_default();
-                let ann = enrich_annotations(&name, tool.get("annotations"));
+                let exposed_name = if routes.contains_key(&backend_tool_name) {
+                    let aliased = format!("{}_{}", proc.kind.cli_namespace(), backend_tool_name);
+                    if routes.contains_key(&aliased) {
+                        return Err(format!("Duplicate MCP tool name `{aliased}` across backends"));
+                    }
+                    tool["name"] = json!(aliased);
+                    let existing_desc = tool["description"].as_str().unwrap_or("").trim_end();
+                    let tag = if proc.kind == BackendKind::Context {
+                        "[context-graph-engine omnigraph.sqlite3]"
+                    } else {
+                        proc.kind.binary_name()
+                    };
+                    tool["description"] = if existing_desc.is_empty() {
+                        json!(tag)
+                    } else if proc.kind == BackendKind::Context {
+                        json!(format!("{existing_desc} {tag}"))
+                    } else {
+                        json!(format!("{existing_desc} [{tag}]"))
+                    };
+                    aliased
+                } else {
+                    backend_tool_name.clone()
+                };
+                let ann = enrich_annotations(&exposed_name, tool.get("annotations"));
                 tool["annotations"] = ann;
-                if routes.contains_key(&name) {
-                    return Err(format!("Duplicate MCP tool name `{name}` across backends"));
-                }
                 routes.insert(
-                    name,
+                    exposed_name,
                     ToolMeta {
                         kind: proc.kind,
+                        backend_tool_name,
                         schema_props,
                     },
                 );
@@ -301,12 +327,12 @@ impl Multiplexer {
             let Some(backend) = self.backends.get_mut(&meta.kind) else {
                 return err_result(format!("Backend `{}` is not running", meta.kind.id()));
             };
-            match backend.call_tool(name, prepared.clone()) {
+            match backend.call_tool(&meta.backend_tool_name, prepared.clone()) {
                 Ok(v) => Ok(v),
                 Err(_) => {
                     // Restart once on unexpected backend EOF/crash.
                     if let Ok(mut respawned) = BackendProcess::spawn(meta.kind) {
-                        let out = respawned.call_tool(name, prepared);
+                        let out = respawned.call_tool(&meta.backend_tool_name, prepared);
                         *backend = respawned;
                         out
                     } else {
@@ -598,7 +624,7 @@ pub fn serve_stdio() -> Result<(), String> {
                             "name": "ai-infra-mod",
                             "version": env!("CARGO_PKG_VERSION")
                         },
-                        "instructions": "Unified AI-Infrastructure MCP multiplexer (56 tools across graph-map, system-orchestration, context-graph, skill-foundry, agent-guardrails, plus mod_status). Pass explicit `project`/`root` or set AI_INFRA_ROOT / MCP roots."
+                        "instructions": "Unified AI-Infrastructure MCP multiplexer (80 tools across graph-map, system-orchestration, context-graph, skill-foundry, agent-guardrails, and skillcache, plus mod_status). Pass explicit `project`/`root` or set AI_INFRA_ROOT / MCP roots."
                     }
                 })
             }

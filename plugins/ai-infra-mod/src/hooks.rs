@@ -161,7 +161,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
     if args.is_empty() || matches!(args[0].as_str(), "-h" | "--help") {
         println!(
             "Usage: ai-infra-mod hook [claude|codex|cursor] <role> [OPTIONS]\n\
-             Roles: session-start | user-prompt | pre-bash | pre-write-edit | pre-subagent | post-write-edit | post-subagent | subagent-stop | stop"
+             Roles: session-start | user-prompt | pre-bash | pre-write-edit | pre-subagent | post-write-edit | post-bash | post-subagent | subagent-stop | stop"
         );
         return Ok(0);
     }
@@ -263,7 +263,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
             )?;
             Ok(emit_and_return(out.code, &out.stdout, &out.stderr))
         }
-        "post-write-edit" => {
+        "post-write-edit" | "post-bash" => {
             let out = invoke_sub(
                 BackendKind::Guard,
                 &["hook".into(), host, "edit-loop".into()],

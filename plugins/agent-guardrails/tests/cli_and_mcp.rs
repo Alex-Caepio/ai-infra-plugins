@@ -230,8 +230,15 @@ fn mcp_refuses_init_into_plugin_cache_dir_without_explicit_root() {
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"generic"}}}),
-        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"guardrails_inspect_policy","arguments":{}}}),
-        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"generic","root":target_repo.display().to_string()}}}),
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"generic","root":"."}}}),
+        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"generic","root":"./"}}}),
+        json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"guardrails_inspect_policy","arguments":{}}}),
+        json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"guardrails_inspect_policy","arguments":{"root":"."}}}),
+        json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"guardrails_check_command","arguments":{"command":"git status"}}}),
+        json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"guardrails_check_command","arguments":{"command":"git status","root":"."}}}),
+        json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"guardrails_loop_status","arguments":{}}}),
+        json!({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"guardrails_loop_status","arguments":{"root":"."}}}),
+        json!({"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"generic","root":target_repo.display().to_string()}}}),
     ];
 
     let mut stdin_buf = String::new();
@@ -248,22 +255,16 @@ fn mcp_refuses_init_into_plugin_cache_dir_without_explicit_root() {
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
 
-    assert_eq!(lines.len(), 4);
-    assert_eq!(lines[1]["result"]["isError"], true);
-    assert!(
-        lines[1]["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Missing 'root' argument")
-    );
+    assert_eq!(lines.len(), 11);
+    for (idx, line) in lines[1..=9].iter().enumerate() {
+        assert_eq!(
+            line["result"]["isError"], true,
+            "expected refusal for line {}: {line}",
+            idx + 1
+        );
+    }
     assert!(!plugin_dir.join(".agent-guardrails").exists());
-    assert!(
-        lines[2]["result"]["structuredContent"]["warning"]
-            .as_str()
-            .unwrap()
-            .contains("pass 'root'")
-    );
-    assert_eq!(lines[3]["result"]["isError"], false);
+    assert_eq!(lines[10]["result"]["isError"], false);
     assert!(target_repo.join(".agent-guardrails/policy.json").is_file());
 }
 
@@ -298,8 +299,12 @@ fn mcp_binary_subcommand_blocks_plugin_cwd_bypass_even_under_ancestor_git() {
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"rust"}}}),
-        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"guardrails_inspect_policy","arguments":{}}}),
-        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"rust","root":target_repo.display().to_string()}}}),
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"rust","root":"."}}}),
+        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"rust","root":"./"}}}),
+        json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"guardrails_inspect_policy","arguments":{"root":"."}}}),
+        json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"guardrails_check_command","arguments":{"command":"git status","root":"."}}}),
+        json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"guardrails_loop_status","arguments":{"root":"."}}}),
+        json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"guardrails_init_policy","arguments":{"preset":"rust","root":target_repo.display().to_string()}}}),
     ];
     {
         let stdin = child.stdin.as_mut().unwrap();
@@ -315,22 +320,109 @@ fn mcp_binary_subcommand_blocks_plugin_cwd_bypass_even_under_ancestor_git() {
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
 
-    assert_eq!(lines.len(), 4);
-    assert_eq!(lines[1]["result"]["isError"], true);
-    assert!(
-        lines[1]["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Missing 'root' argument")
-    );
+    assert_eq!(lines.len(), 8);
+    for (idx, line) in lines[1..=6].iter().enumerate() {
+        assert_eq!(
+            line["result"]["isError"], true,
+            "expected refusal for line {}: {line}",
+            idx + 1
+        );
+    }
     assert!(!fake_home.join(".agent-guardrails").exists());
     assert!(!plugin_dir.join(".agent-guardrails").exists());
-    assert!(
-        lines[2]["result"]["structuredContent"]["warning"]
-            .as_str()
-            .unwrap()
-            .contains("pass 'root'")
-    );
-    assert_eq!(lines[3]["result"]["isError"], false);
+    assert_eq!(lines[7]["result"]["isError"], false);
     assert!(target_repo.join(".agent-guardrails/policy.json").is_file());
+}
+
+#[test]
+fn cli_reports_read_only_alignment_and_signature_loop_lifecycle() {
+    let bin = env!("CARGO_BIN_EXE_guardrails");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".git")).unwrap();
+
+    // Read-only classification via `check-command --json`
+    let ro = Command::new(bin)
+        .args(["check-command", "--root"])
+        .arg(root)
+        .args(["--json", "git status | head -n 10"])
+        .output()
+        .unwrap();
+    assert!(ro.status.success());
+    let ro_json: Value = serde_json::from_slice(&ro.stdout).unwrap();
+    assert_eq!(ro_json["allowed"], true);
+    assert_eq!(ro_json["read_only"], true);
+
+    let rw = Command::new(bin)
+        .args(["check-command", "--root"])
+        .arg(root)
+        .args(["--json", "sort -o out.txt names.txt"])
+        .output()
+        .unwrap();
+    assert!(rw.status.success());
+    let rw_json: Value = serde_json::from_slice(&rw.stdout).unwrap();
+    assert_eq!(rw_json["allowed"], true);
+    assert_eq!(rw_json["read_only"], false);
+
+    // Track failing bash check signature via PostToolUse edit-loop, inspect in status, then reset on pass.
+    let session = "cliloopsig1";
+    let run_hook = |role: &str, payload: &Value| {
+        let mut child = Command::new(bin)
+            .args(["hook", "claude", role, "--root"])
+            .arg(root)
+            .env("TMPDIR", root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+
+    let fail_check = json!({
+        "session_id": session,
+        "tool_name": "Bash",
+        "command": "cargo test foo | head -n 20",
+        "exit_code": 1,
+        "stderr": "error[E0308]: mismatched types"
+    });
+    assert_eq!(run_hook("edit-loop", &fail_check).status.code(), Some(0));
+
+    let st1 = Command::new(bin)
+        .args(["status", "--root"])
+        .arg(root)
+        .args(["--session", session, "--json"])
+        .env("TMPDIR", root)
+        .output()
+        .unwrap();
+    assert!(st1.status.success());
+    let st1_json: Value = serde_json::from_slice(&st1.stdout).unwrap();
+    let active_sig = st1_json["runtime"]["active_signature"].as_str().unwrap_or("");
+    assert!(active_sig.contains("cargo test foo"), "{st1_json}");
+    assert!(active_sig.contains("mismatched types"), "{st1_json}");
+
+    let pass_check = json!({
+        "session_id": session,
+        "tool_name": "Bash",
+        "command": "cargo test foo",
+        "exit_code": 0
+    });
+    assert_eq!(run_hook("edit-loop", &pass_check).status.code(), Some(0));
+
+    let st2 = Command::new(bin)
+        .args(["status", "--root"])
+        .arg(root)
+        .args(["--session", session, "--json"])
+        .env("TMPDIR", root)
+        .output()
+        .unwrap();
+    assert!(st2.status.success());
+    let st2_json: Value = serde_json::from_slice(&st2.stdout).unwrap();
+    assert!(st2_json["runtime"]["active_signature"].is_null(), "{st2_json}");
 }

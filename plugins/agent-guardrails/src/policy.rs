@@ -7,8 +7,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 
 pub const STANDALONE_POLICY_PATH: &str = ".agent-guardrails/policy.json";
@@ -244,9 +245,22 @@ fn entry(value: &str) -> String {
     }
 }
 
-pub fn compile_glob(value: &str) -> Result<regex::Regex> {
+const POLICY_GLOB_CACHE_CAP: usize = 256;
+
+#[derive(Default)]
+struct PolicyGlobCache {
+    seq: u64,
+    entries: HashMap<String, (std::result::Result<regex::Regex, String>, u64)>,
+}
+
+fn policy_glob_cache() -> &'static Mutex<PolicyGlobCache> {
+    static CACHE: OnceLock<Mutex<PolicyGlobCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(PolicyGlobCache::default()))
+}
+
+fn compile_glob_uncached(value: &str) -> std::result::Result<regex::Regex, String> {
     if !literal(value, 128) {
-        return Err(invalid("glob pattern length or characters"));
+        return Err("glob pattern length or characters".into());
     }
     let mut expression = String::from("^");
     let chars: Vec<char> = value.chars().collect();
@@ -271,17 +285,48 @@ pub fn compile_glob(value: &str) -> Result<regex::Regex> {
                     at += 1;
                 }
                 if at == chars.len() || at == begin {
-                    return Err(invalid("unclosed character class in glob"));
+                    return Err("unclosed character class in glob".into());
                 }
                 expression.push(']');
             }
-            ']' => return Err(invalid("unexpected ']' in glob")),
+            ']' => return Err("unexpected ']' in glob".into()),
             c => expression.push_str(&regex::escape(&c.to_string())),
         }
         at += 1;
     }
     expression.push('$');
-    regex::Regex::new(&expression).map_err(|_| invalid("invalid glob regex"))
+    regex::Regex::new(&expression).map_err(|_| "invalid glob regex".into())
+}
+
+/// Compile a declarative `policy.json` glob into a bounded cached `Regex`.
+pub fn compile_glob(value: &str) -> Result<regex::Regex> {
+    if let Ok(mut cache) = policy_glob_cache().lock() {
+        cache.seq = cache.seq.saturating_add(1);
+        let seq = cache.seq;
+        if let Some((compiled, last_used)) = cache.entries.get_mut(value) {
+            *last_used = seq;
+            return compiled.clone().map_err(|msg| invalid(&msg));
+        }
+    }
+    let compiled = compile_glob_uncached(value);
+    if let Ok(mut cache) = policy_glob_cache().lock() {
+        cache.seq = cache.seq.saturating_add(1);
+        let seq = cache.seq;
+        if cache.entries.len() >= POLICY_GLOB_CACHE_CAP
+            && !cache.entries.contains_key(value)
+            && let Some(evict) = cache
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, last_used))| *last_used)
+                .map(|(k, _)| k.clone())
+        {
+            cache.entries.remove(&evict);
+        }
+        cache
+            .entries
+            .insert(value.to_owned(), (compiled.clone(), seq));
+    }
+    compiled.map_err(|msg| invalid(&msg))
 }
 
 fn patterns(condition: &Condition) -> Option<&[String]> {

@@ -201,10 +201,14 @@ pub fn advance(
     let mut count = read_counter(&target);
     if reset_after_edit && count > 0 {
         let modified = fs::metadata(&target)?.modified()?;
+        let edit_prefix = format!("edit-{}-", session_id(payload));
         if fs::read_dir(&folder)?
             .filter_map(std::result::Result::ok)
             .any(|entry| {
-                entry.file_name().to_string_lossy().starts_with("edit-")
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(&edit_prefix)
                     && custody::owned_by_current_user(&entry.path())
                     && entry
                         .metadata()
@@ -227,17 +231,18 @@ pub fn advance(
     }
     let mut output = options.open(target)?;
     if !output.metadata()?.is_file() {
-        return Err(GuardError::policy("Counter target is not a regular file"));
+        return Err(GuardError::policy("Counter target is not regular file"));
     }
     writeln!(output, "{count}")?;
     Ok(count)
 }
 
-/// Clear all loop counters for `session` and prune counters older than 24h.
+/// Clear all loop counters (and signature marker) for `session` and prune counters older than 24h.
 pub fn reset(root: &Path, session: &str) -> Result<u32> {
     let folder = directory(root)?;
     let now = SystemTime::now();
     let mut removed = 0u32;
+    let sig_name = format!("sig-{session}");
     for entry in fs::read_dir(folder)?.filter_map(std::result::Result::ok) {
         let path = entry.path();
         if !custody::owned_by_current_user(&path) || !path.is_file() {
@@ -252,6 +257,7 @@ pub fn reset(root: &Path, session: &str) -> Result<u32> {
             .is_some_and(|age| age > Duration::from_secs(86400));
         if (name.starts_with(&format!("cmd-{session}-"))
             || name.starts_with(&format!("edit-{session}-"))
+            || name == sig_name
             || expired)
             && fs::remove_file(path).is_ok()
         {
@@ -259,6 +265,57 @@ pub fn reset(root: &Path, session: &str) -> Result<u32> {
         }
     }
     Ok(removed)
+}
+
+/// Persist the latest failing normalized command/error signature for this session.
+pub fn record_signature(root: &Path, payload: &Value, signature: &str) -> Result<()> {
+    let folder = directory(root)?;
+    let target = folder.join(format!("sig-{}", session_id(payload)));
+    let trimmed = signature.trim();
+    if trimmed.is_empty() {
+        if custody::owned_by_current_user(&target) {
+            let _ = fs::remove_file(target);
+        }
+        return Ok(());
+    }
+    if fs::symlink_metadata(&target).is_ok() && !custody::owned_by_current_user(&target) {
+        return Err(GuardError::policy("Counter target is not owned by user"));
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut output = options.open(&target)?;
+    if !output.metadata()?.is_file() {
+        return Err(GuardError::policy("Counter target is not a regular file"));
+    }
+    output.write_all(trimmed.as_bytes())?;
+    Ok(())
+}
+
+fn read_signature_for_session(folder: &Path, session: &str) -> Option<String> {
+    let target = folder.join(format!("sig-{session}"));
+    if !custody::owned_by_current_user(&target) {
+        return None;
+    }
+    let meta = fs::symlink_metadata(&target).ok()?;
+    if custody::linked(&meta) || !meta.is_file() || meta.len() > 4096 {
+        return None;
+    }
+    let raw = fs::read_to_string(&target).ok()?;
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Return the currently recorded failing command/error signature for this session, if any.
+pub fn active_signature(root: &Path, payload: &Value) -> Option<String> {
+    let folder = directory(root).ok()?;
+    read_signature_for_session(&folder, &session_id(payload))
 }
 
 pub fn writer_folder() -> Result<PathBuf> {
@@ -349,6 +406,7 @@ pub struct LoopStatus {
     pub max_command_count: u32,
     pub edit_counters: usize,
     pub max_edit_count: u32,
+    pub active_signature: Option<String>,
     pub active_writer_lock: Option<String>,
 }
 
@@ -378,6 +436,11 @@ pub fn inspect_status(root: &Path, session: Option<&str>) -> Result<LoopStatus> 
             }
         }
     }
+    let active_sig = if folder.is_dir() && custody::owned_by_current_user(&folder) {
+        read_signature_for_session(&folder, &session)
+    } else {
+        None
+    };
 
     let mut active_writer = None;
     if let Ok(lock_dir) = writer_folder() {
@@ -409,6 +472,7 @@ pub fn inspect_status(root: &Path, session: Option<&str>) -> Result<LoopStatus> 
         max_command_count: max_cmd,
         edit_counters: edit_n,
         max_edit_count: max_edit,
+        active_signature: active_sig,
         active_writer_lock: active_writer,
     })
 }

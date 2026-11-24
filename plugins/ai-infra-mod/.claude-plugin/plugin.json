@@ -1,7 +1,7 @@
 {
   "name": "ai-infra-mod",
-  "version": "0.1.0",
-  "description": "Unified AI Infrastructure suite combining code graph mapping, multi-agent orchestration, context/memory graph continuity, skill foundry, and execution guardrails",
+  "version": "0.2.0",
+  "description": "Unified AI Infrastructure suite combining code graph mapping, multi-agent & Omnigraph orchestration, context/memory graph continuity, skill foundry, execution guardrails, and sandboxed SkillCache trace compilation",
   "author": {
     "name": "Alex-Caepio",
     "url": "https://github.com/Alex-Caepio/ai-infra-mod"
@@ -14,7 +14,9 @@
     "code-graph",
     "orchestration",
     "context-graph",
+    "omnigraph",
     "skill-foundry",
+    "skillcache",
     "guardrails",
     "mcp"
   ]

@@ -40,13 +40,15 @@ fn rpc(stdin: &mut impl Write, reader: &mut impl BufRead, req: Value) -> Value {
 }
 
 #[test]
-fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
+fn mcp_aggregates_all_80_tools_with_annotations_and_routes_all_6_backends() {
     let tmp = tempdir().unwrap();
     let repo = tmp.path().join("repo");
+    let xdg_state = tmp.path().join("xdg-state");
     std::fs::create_dir(&repo).unwrap();
+    std::fs::create_dir(&xdg_state).unwrap();
     init_git_repo(&repo);
 
-    // Create a valid minimal skill inside repo so skill_validate has a real target.
+    // Create a valid minimal skill inside repo so skill_validate & skillcache_gate1 have a real target.
     let skill_dir = repo.join("demo-skill");
     std::fs::create_dir(&skill_dir).unwrap();
     std::fs::write(
@@ -58,6 +60,8 @@ fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
     let mut mcp = Command::new(mod_bin())
         .arg("mcp")
         .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .env("HOME", tmp.path())
+        .env("XDG_STATE_HOME", &xdg_state)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -90,12 +94,36 @@ fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
         json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }),
     );
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 56, "expected 55 backend tools + mod_status");
+    assert_eq!(tools.len(), 80, "expected 79 backend tools + mod_status");
     let names: BTreeSet<String> = tools
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(names.len(), 56);
+    assert_eq!(names.len(), 80, "expected 80 unique MCP tool names");
+    for expected in [
+        "mod_status",
+        "graph_file_impact",
+        "graph_memory_links",
+        "system_graph_status",
+        "orch_permission_mode",
+        "omnigraph_status",
+        "omnigraph_atoms",
+        "omnigraph_publish",
+        "omnigraph_branches_diff",
+        "omnigraph_merge_keep",
+        "omnigraph_sync_canonical",
+        "omnigraph_file_context",
+        "omnigraph_branch_diff",
+        "context_omnigraph_atoms",
+        "context_omnigraph_merge_keep",
+        "context_memory_links_for_file",
+        "skillcache_status",
+        "skillcache_capsules_list",
+        "skillcache_gate1",
+        "skillcache_compile",
+    ] {
+        assert!(names.contains(expected), "missing expected tool `{expected}`");
+    }
     for t in tools {
         let ann = &t["annotations"];
         assert!(
@@ -117,7 +145,14 @@ fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
         }),
     );
     assert_eq!(st["result"]["isError"], false, "{st}");
-    assert_eq!(st["result"]["structuredContent"]["total_tools"], 56);
+    assert_eq!(st["result"]["structuredContent"]["total_tools"], 80);
+    assert_eq!(
+        st["result"]["structuredContent"]["subsystems"]
+            .as_array()
+            .unwrap()
+            .len(),
+        6
+    );
 
     // 2. graph-map (`graph_status`)
     let gr = rpc(
@@ -132,7 +167,7 @@ fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
     );
     assert_eq!(gr["result"]["isError"], false, "{gr}");
 
-    // 3. system-orchestration (`orch_working_memory_write` + `orch_working_memory_read`)
+    // 3. system-orchestration (`orch_working_memory_*`, `omnigraph_atoms`)
     let wm_w = rpc(
         &mut stdin,
         &mut stdout,
@@ -162,18 +197,49 @@ fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
     );
     assert_eq!(wm_r["result"]["isError"], false, "{wm_r}");
 
-    // 4. context-graph (`memory_status`)
-    let mem = rpc(
+    let orch_og = rpc(
         &mut stdin,
         &mut stdout,
         json!({
             "jsonrpc": "2.0",
             "id": 7,
             "method": "tools/call",
+            "params": {
+                "name": "omnigraph_atoms",
+                "arguments": { "project": repo }
+            }
+        }),
+    );
+    assert_eq!(orch_og["result"]["isError"], false, "{orch_og}");
+    assert!(
+        orch_og["result"]["structuredContent"]["active_branch"].is_string(),
+        "expected orch-engine omnigraph_atoms payload: {orch_og}"
+    );
+
+    // 4. context-graph (`memory_status` + disambiguated `context_omnigraph_atoms`)
+    let mem = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
             "params": { "name": "memory_status", "arguments": { "project": repo } }
         }),
     );
     assert_eq!(mem["result"]["isError"], false, "{mem}");
+
+    let ctx_og = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": { "name": "context_omnigraph_atoms", "arguments": { "project": repo } }
+        }),
+    );
+    assert_eq!(ctx_og["result"]["isError"], false, "{ctx_og}");
 
     // 5. skill-foundry (`skill_validate`)
     let sk = rpc(
@@ -181,7 +247,7 @@ fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
         &mut stdout,
         json!({
             "jsonrpc": "2.0",
-            "id": 8,
+            "id": 10,
             "method": "tools/call",
             "params": { "name": "skill_validate", "arguments": { "path": skill_dir } }
         }),
@@ -194,12 +260,39 @@ fn mcp_aggregates_all_56_tools_with_annotations_and_routes_all_5_backends() {
         &mut stdout,
         json!({
             "jsonrpc": "2.0",
-            "id": 9,
+            "id": 11,
             "method": "tools/call",
             "params": { "name": "guardrails_check_command", "arguments": { "root": repo, "command": "git status" } }
         }),
     );
     assert_eq!(grd_ok["result"]["isError"], false, "{grd_ok}");
+
+    // 7. skillcache (`skillcache_status` + `skillcache_capsules_list`)
+    let sc_state = tmp.path().join("sc-state");
+    std::fs::create_dir(&sc_state).unwrap();
+    let sc_st = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": { "name": "skillcache_status", "arguments": { "project": repo, "state_dir": sc_state } }
+        }),
+    );
+    assert_eq!(sc_st["result"]["isError"], false, "{sc_st}");
+
+    let sc_list = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": { "name": "skillcache_capsules_list", "arguments": { "project": repo, "state_dir": sc_state } }
+        }),
+    );
+    assert_eq!(sc_list["result"]["isError"], false, "{sc_list}");
 
     drop(stdin);
     assert!(mcp.wait().unwrap().success());
@@ -296,7 +389,70 @@ fn mcp_restrict_root_injects_root_and_blocks_path_escapes_from_plugin_cwd() {
     let outside_json = outside.join("outside.json");
     std::fs::write(&outside_json, "{}").unwrap();
 
-    // Path escapes (traversal `..`, absolute sibling, or external project/import/ceiling/sources/merge_from) MUST fail!
+    // Branch names (`source`/`target`) on `omnigraph_branch_diff` & `omnigraph_branches_diff` MUST NOT be treated as paths under AI_INFRA_RESTRICT_ROOT!
+    let bd = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 16,
+            "method": "tools/call",
+            "params": {
+                "name": "omnigraph_branch_diff",
+                "arguments": { "source": "feature/x", "target": "main" }
+            }
+        }),
+    );
+    let bd_txt = bd["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(
+        !bd_txt.contains("AI_INFRA_RESTRICT_ROOT")
+            && !bd_txt.contains(repo.to_string_lossy().as_ref())
+            && bd_txt.contains("Omnigraph branch 'feature/x' not found"),
+        "expected verbatim branch name `feature/x` passed to backend without path rewriting: {bd}"
+    );
+
+    let obd = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "tools/call",
+            "params": {
+                "name": "omnigraph_branches_diff",
+                "arguments": { "source": "feature/x", "target": "main" }
+            }
+        }),
+    );
+    let obd_txt = obd["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(
+        !obd_txt.contains("AI_INFRA_RESTRICT_ROOT")
+            && !obd_txt.contains(repo.to_string_lossy().as_ref()),
+        "expected orch omnigraph_branches_diff not to treat branch names as paths: {obd}"
+    );
+
+    // Repo-relative `path` / `previous_path` / `files` / `sources` on workspace-scoped tools MUST stay relative (not rewritten to /abs/...) under AI_INFRA_RESTRICT_ROOT=1!
+    for (rid, tool, args) in [
+        (21, "graph_file_impact", json!({ "path": "README.md" })),
+        (22, "graph_memory_links", json!({ "path": "README.md", "previous_path": "OLD.md", "files": [{ "path": "README.md" }] })),
+        (23, "omnigraph_file_context", json!({ "path": "README.md" })),
+        (24, "context_memory_links_for_file", json!({ "path": "README.md", "previous_path": "OLD.md" })),
+        (25, "memory_source_fingerprints", json!({ "sources": ["README.md"] })),
+    ] {
+        let resp = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({
+                "jsonrpc": "2.0",
+                "id": rid,
+                "method": "tools/call",
+                "params": { "name": tool, "arguments": args }
+            }),
+        );
+        assert_eq!(resp["result"]["isError"], false, "{tool} failed under AI_INFRA_RESTRICT_ROOT=1: {resp}");
+    }
+
+    // Path escapes (traversal `..`, absolute sibling, or external project/import/ceiling/sources/merge_from/skillcache/context_import_bundle) MUST fail!
     for (id, tool, args) in [
         (5, "skill_validate", json!({ "path": "../outside-secret/evil-skill" })),
         (6, "skill_validate", json!({ "path": out_skill })),
@@ -309,6 +465,12 @@ fn mcp_restrict_root_injects_root_and_blocks_path_escapes_from_plugin_cwd() {
         (13, "memory_source_fingerprints", json!({ "sources": ["../outside-secret/outside.json"] })),
         (14, "context_handoff_save", json!({ "goal": "g", "summary": "s", "next_steps": ["n"], "files": [outside_json], "merge_from": ["../outside-secret/h.md"] })),
         (15, "skill_cost_audit", json!({ "claude_dir": outside })),
+        (17, "context_import_bundle", json!({ "source": "../outside-secret/escaped.cgb.zip" })),
+        (18, "skillcache_gate1", json!({ "package_dir": "../outside-secret/evil-skill" })),
+        (19, "skillcache_compile", json!({ "candidate_path": "../outside-secret/outside.json" })),
+        (26, "graph_file_impact", json!({ "path": "../outside-secret/x.php" })),
+        (27, "graph_memory_links", json!({ "files": [{ "path": "../outside-secret/x.php" }] })),
+        (28, "system_graph_status", json!({ "config_path": "../outside-secret/system.json" })),
     ] {
         let resp = rpc(
             &mut stdin,
@@ -379,6 +541,10 @@ fn mcp_negotiates_roots_list_and_guards_plugin_cwd_without_roots() {
             (3, "graph_status", json!({ "project": "." })),
             (4, "memory_status", json!({})),
             (5, "orch_working_memory_read", json!({ "scope_id": "x" })),
+            (6, "skillcache_status", json!({})),
+            (7, "skillcache_status", json!({ "project": "./." })),
+            (8, "skillcache_gate1", json!({})),
+            (9, "skillcache_gate1", json!({ "package_dir": "." })),
         ] {
             let resp = rpc(
                 &mut stdin,
@@ -535,8 +701,16 @@ fn hooks_and_cli_status_and_passthrough_work_end_to_end() {
     let ss_out = ss.wait_with_output().unwrap();
     assert_eq!(ss_out.status.code(), Some(0));
 
-    // `hook claude pre-subagent`, `post-subagent`, `subagent-stop` work fail-open cleanly.
-    for role in ["pre-subagent", "post-subagent", "subagent-stop", "user-prompt", "stop"] {
+    // `hook claude pre-subagent`, `post-subagent`, `subagent-stop`, `post-write-edit`, `post-bash`, `user-prompt`, `stop` work fail-open cleanly.
+    for role in [
+        "pre-subagent",
+        "post-subagent",
+        "subagent-stop",
+        "post-write-edit",
+        "post-bash",
+        "user-prompt",
+        "stop",
+    ] {
         let mut h = Command::new(mod_bin())
             .args(["hook", "claude", role])
             .env("AI_INFRA_BIN_DIR", staged_bin_dir())
@@ -544,10 +718,20 @@ fn hooks_and_cli_status_and_passthrough_work_end_to_end() {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
+        let payload = if role == "post-bash" {
+            json!({
+                "cwd": repo,
+                "tool_name": "Bash",
+                "tool_input": { "command": "cargo test" },
+                "tool_response": { "exit_code": 0 }
+            })
+        } else {
+            json!({ "cwd": repo })
+        };
         h.stdin
             .take()
             .unwrap()
-            .write_all(json!({ "cwd": repo }).to_string().as_bytes())
+            .write_all(payload.to_string().as_bytes())
             .unwrap();
         let out = h.wait_with_output().unwrap();
         assert_eq!(out.status.code(), Some(0), "hook `{role}` failed");
@@ -563,7 +747,7 @@ fn hooks_and_cli_status_and_passthrough_work_end_to_end() {
         .unwrap();
     assert!(st.status.success());
     let st_json: Value = serde_json::from_slice(&st.stdout).unwrap();
-    assert_eq!(st_json["backends"].as_array().unwrap().len(), 5);
+    assert_eq!(st_json["backends"].as_array().unwrap().len(), 6);
     assert!(
         st_json["backends"]
             .as_array()
@@ -572,14 +756,14 @@ fn hooks_and_cli_status_and_passthrough_work_end_to_end() {
             .all(|b| b["available"] == true)
     );
 
-    // Passthrough namespaces (`guard`, `graph`, `orch`, `context`, `skill`)
+    // Passthrough namespaces (`guard`, `graph`, `orch`, `context`, `skill`, `skillcache`)
     let g_blk = Command::new(mod_bin())
         .args(["guard", "check-command", "rm -rf /"])
         .env("AI_INFRA_BIN_DIR", staged_bin_dir())
         .output()
         .unwrap();
     assert_eq!(g_blk.status.code(), Some(2));
-    for ns in ["graph", "orch", "context", "skill", "guard"] {
+    for ns in ["graph", "orch", "context", "skill", "guard", "skillcache"] {
         let h = Command::new(mod_bin())
             .args([ns, "--help"])
             .env("AI_INFRA_BIN_DIR", staged_bin_dir())
@@ -587,4 +771,15 @@ fn hooks_and_cli_status_and_passthrough_work_end_to_end() {
             .unwrap();
         assert!(h.status.success(), "{ns} --help failed");
     }
+    let sc_state = tmp.path().join("sc-cli-state");
+    std::fs::create_dir(&sc_state).unwrap();
+    let sc_cli = Command::new(mod_bin())
+        .args(["skillcache", "status", "--project"])
+        .arg(&repo)
+        .arg("--state-dir")
+        .arg(&sc_state)
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .output()
+        .unwrap();
+    assert!(sc_cli.status.success(), "skillcache status passthrough failed");
 }

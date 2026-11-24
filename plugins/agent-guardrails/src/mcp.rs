@@ -104,6 +104,54 @@ fn validate_args(spec: &Value, input: &Value) -> Result<()> {
     Ok(())
 }
 
+fn is_dot_self(raw: &str) -> bool {
+    matches!(raw.trim(), "." | "./" | ".\\")
+}
+
+fn resolve_tool_root(default_root: &Path, input: &Value) -> Result<PathBuf> {
+    let cwd_in_plugin = std::env::current_dir()
+        .ok()
+        .is_some_and(|cwd| custody::inside_plugin_dir(&cwd));
+    let in_plugin_dir = custody::inside_plugin_dir(default_root) || cwd_in_plugin;
+
+    let explicit_root = input
+        .get("root")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    match explicit_root {
+        None => {
+            if in_plugin_dir {
+                return Err(GuardError::invalid(
+                    "Missing 'root' argument: MCP server cwd is inside a plugin directory; pass 'root' explicitly set to your target repository path.",
+                ));
+            }
+            Ok(default_root.to_path_buf())
+        }
+        Some(raw) => {
+            if in_plugin_dir && is_dot_self(raw) {
+                return Err(GuardError::invalid(
+                    "Refusing relative '.' inside plugin directory; pass explicit 'root' set to your target repository path.",
+                ));
+            }
+            let candidate = Path::new(raw);
+            let lexical = if candidate.is_absolute() {
+                custody::normalize_lexical(candidate)
+            } else {
+                custody::normalize_lexical(&default_root.join(candidate))
+            };
+            let resolved = custody::discover_repo_root(&lexical);
+            if custody::inside_plugin_dir(&lexical) || custody::inside_plugin_dir(&resolved) {
+                return Err(GuardError::invalid(
+                    "Refusing plugin directory as target 'root'; pass an explicit target repository path outside the plugin/cache directory.",
+                ));
+            }
+            Ok(resolved)
+        }
+    }
+}
+
 /// Dispatch one MCP tool invocation.
 pub fn call_tool(default_root: &Path, name: &str, input: &Value) -> Result<Value> {
     let spec = tools()
@@ -112,17 +160,7 @@ pub fn call_tool(default_root: &Path, name: &str, input: &Value) -> Result<Value
         .ok_or_else(|| GuardError::invalid(format!("Unknown guardrails tool: {name}")))?;
     validate_args(&spec, input)?;
 
-    let explicit_root = input
-        .get("root")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty());
-    let plugin_cwd_without_root =
-        explicit_root.is_none() && custody::inside_plugin_dir(default_root);
-
-    let root = explicit_root
-        .map(PathBuf::from)
-        .map(|p| custody::discover_repo_root(&p))
-        .unwrap_or_else(|| default_root.to_path_buf());
+    let root = resolve_tool_root(default_root, input)?;
 
     match name {
         "guardrails_check_command" => {
@@ -142,20 +180,9 @@ pub fn call_tool(default_root: &Path, name: &str, input: &Value) -> Result<Value
                 .and_then(Value::as_str)
                 .map(Preset::parse)
                 .transpose()?;
-            let mut val = policy::inspect_policy(&root, preset)?;
-            if plugin_cwd_without_root {
-                val["warning"] = json!(
-                    "MCP server cwd is inside the plugin directory; pass 'root' explicitly set to your target repository path."
-                );
-            }
-            Ok(val)
+            policy::inspect_policy(&root, preset)
         }
         "guardrails_init_policy" => {
-            if plugin_cwd_without_root {
-                return Err(GuardError::invalid(
-                    "Missing 'root' argument: MCP server cwd is inside the plugin directory; pass 'root' set to the target repository path.",
-                ));
-            }
             let preset_raw = input["preset"]
                 .as_str()
                 .ok_or_else(|| GuardError::invalid("preset must be a string"))?;
@@ -180,11 +207,6 @@ pub fn call_tool(default_root: &Path, name: &str, input: &Value) -> Result<Value
             let mut val = serde_json::to_value(status)?;
             if reset {
                 val["reset_removed_counters"] = json!(removed);
-            }
-            if plugin_cwd_without_root {
-                val["warning"] = json!(
-                    "MCP server cwd is inside the plugin directory; pass 'root' explicitly set to your target repository path."
-                );
             }
             Ok(val)
         }

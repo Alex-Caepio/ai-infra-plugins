@@ -1,7 +1,7 @@
 {
   "name": "ai-infra-mod",
-  "version": "0.1.0",
-  "description": "Unified AI Infrastructure suite combining code graph mapping, multi-agent orchestration, context/memory graph continuity, skill foundry, and execution guardrails",
+  "version": "0.2.0",
+  "description": "Unified AI Infrastructure suite combining code graph mapping, multi-agent & Omnigraph orchestration, context/memory graph continuity, skill foundry, execution guardrails, and sandboxed SkillCache trace compilation",
   "author": {
     "name": "Alex-Caepio",
     "url": "https://github.com/Alex-Caepio/ai-infra-mod"
@@ -14,7 +14,9 @@
     "code-graph",
     "orchestration",
     "context-graph",
+    "omnigraph",
     "skill-foundry",
+    "skillcache",
     "guardrails",
     "mcp"
   ],
@@ -23,8 +25,8 @@
   "hooks": "./hooks/codex-hooks.json",
   "interface": {
     "displayName": "AI Infrastructure Mod",
-    "shortDescription": "Unified code graph, orchestration, context memory, skill foundry, and guardrails",
-    "longDescription": "All-in-one dual-compatible engineering suite providing 56 MCP tools across dependency mapping, multi-service orchestration, SQLite+Markdown context graphs, skill evaluation/vetting, and POSIX AST safety guardrails.",
+    "shortDescription": "Unified code graph, orchestration, context & Omnigraph memory, skill foundry, SkillCache, and guardrails",
+    "longDescription": "All-in-one dual-compatible engineering suite providing 80 MCP tools across 13-language dependency mapping, multi-service & Omnigraph orchestration, SQLite+Markdown context graphs, skill evaluation/vetting, sandboxed SkillCache compilation, and POSIX AST safety guardrails.",
     "developerName": "Alex-Caepio",
     "category": "Coding",
     "capabilities": [
