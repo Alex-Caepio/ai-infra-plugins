@@ -1,0 +1,85 @@
+{
+  "name": "ai-infra-antigravity",
+  "owner": {
+    "name": "Alex-Caepio"
+  },
+  "plugins": [
+    {
+      "name": "ai-infra-mod",
+      "version": "0.2.0",
+      "description": "Unified AI Infrastructure suite combining all 6 engines (80 MCP tools): 13-language code graph mapping, multi-service & Omnigraph orchestration, SQLite context memory, skill foundry, POSIX AST safety guardrails, and sandboxed SkillCache compilation.",
+      "category": "development",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Alex-Caepio/ai-infra-plugins/releases/download/antigravity-v0.2.0/ai-infra-mod-antigravity.zip",
+        "sha256": "cf2051e4a184ae27531bcd81dea4c744dd3602a8d27c634ead8903ba23801766"
+      }
+    },
+    {
+      "name": "graph-map",
+      "version": "0.2.0",
+      "description": "Standalone interactive code-graph explorer with native 13-language tree-sitter AST + SQLite IR, commit/PR/range diffs, test reach, linked project memory, architectural layers, and Canvas2D WASM UI.",
+      "category": "development",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Alex-Caepio/ai-infra-plugins/releases/download/antigravity-v0.2.0/graph-map-antigravity.zip",
+        "sha256": "86a0996fcadc7a10013b311dd0fa36389ca3d778c0a3f73feac0b01ff4a72e95"
+      }
+    },
+    {
+      "name": "system-orchestration",
+      "version": "0.1.0",
+      "description": "Multi-service orchestration, supervised agent sessions, live approval permission modes, cross-service dependency bridges, fleet/clash review, SQLite working memory, and Omnigraph context sync.",
+      "category": "development",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Alex-Caepio/ai-infra-plugins/releases/download/antigravity-v0.2.0/system-orchestration-antigravity.zip",
+        "sha256": "40a64f49d095588ea2c91195b701e4c52481424ff9fdb5bb179a484768d5aed2"
+      }
+    },
+    {
+      "name": "context-graph",
+      "version": "0.1.0",
+      "description": "Unified Context Graph, Project Brain, Memory Bank, session handoffs, embedded Omnigraph sync, and SHA-256 attested export/import bundles.",
+      "category": "productivity",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Alex-Caepio/ai-infra-plugins/releases/download/antigravity-v0.2.0/context-graph-antigravity.zip",
+        "sha256": "f03dbe923b74a9e69fc1c0e758ff6036ae31e1a8f53668cb4432e7b802c3a69b"
+      }
+    },
+    {
+      "name": "skill-foundry",
+      "version": "0.1.0",
+      "description": "Engineering workbench for Agent Skills: scaffold, validate, package, run cross-CLI trigger evals, optimize descriptions, lint token budgets, vet security risks, and audit Claude/Codex token cost.",
+      "category": "development",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Alex-Caepio/ai-infra-plugins/releases/download/antigravity-v0.2.0/skill-foundry-antigravity.zip",
+        "sha256": "cadbd07259bedcf0d7f718f5bef267b3965be3ae5f87239bb170c2a8bae0d6ee"
+      }
+    },
+    {
+      "name": "agent-guardrails",
+      "version": "0.1.0",
+      "description": "Portable POSIX AST shell safety guard, $TMPDIR command/edit loop breakers, repository file-naming checks, and advisory subagent write-lock gates.",
+      "category": "security",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Alex-Caepio/ai-infra-plugins/releases/download/antigravity-v0.2.0/agent-guardrails-antigravity.zip",
+        "sha256": "827eb830882f040e91611b2dbaf952ae6f3af07ffdc1ec9cc23a8438aca97cd0"
+      }
+    },
+    {
+      "name": "skillcache",
+      "version": "0.1.0",
+      "description": "Standalone SkillCache compiler, sandbox gate verifier (Gate 1/2/3), warm capsule executor, and stdio MCP server.",
+      "category": "development",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Alex-Caepio/ai-infra-plugins/releases/download/antigravity-v0.2.0/skillcache-antigravity.zip",
+        "sha256": "72720d7a1836cfad180c471a0a3f8acb505acbedb60d329aa1eff4d4ef44705d"
+      }
+    }
+  ]
+}

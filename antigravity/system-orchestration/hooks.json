@@ -1,0 +1,28 @@
+{
+  "system-orchestration-dispatch": {
+    "PreToolUse": [
+      {
+        "matcher": "invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/orch-engine hook subagent-gate --host antigravity",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/orch-engine hook subagent-dispatch --host antigravity",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

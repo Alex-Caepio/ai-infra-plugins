@@ -39,15 +39,24 @@ const PATH_KEYS: &[&str] = &[
 ];
 
 pub fn is_plugin_dir(path: &Path) -> bool {
+    let has_mod_bin = path.join("bin/ai-infra-mod").is_file()
+        || path.join("bin/ai-infra-mod.exe").is_file();
     if path.join(".codex-plugin").is_dir()
         || path.join(".claude-plugin").is_dir()
+        || path.join(".antigravity-plugin/plugin.json").is_file()
+        || path.join(".gemini-plugin/plugin.json").is_file()
         || (path.join(".mcp.json").is_file() && path.join("bin").is_dir())
-        || (path.join("bin/ai-infra-mod").is_file() && path.join("Cargo.toml").is_file())
+        || (has_mod_bin
+            && (path.join("Cargo.toml").is_file()
+                || path.join("plugin.json").is_file()
+                || path.join("mcp_config.json").is_file()))
     {
         return true;
     }
     let normalized = path.to_string_lossy().replace('\\', "/");
     normalized.contains(".codex/plugins/cache")
+        || normalized.contains(".gemini/config/plugins")
+        || normalized.contains(".antigravity/plugins")
 }
 
 pub fn env_configured_root() -> Option<PathBuf> {
@@ -522,5 +531,44 @@ mod tests {
         )
         .unwrap_err();
         assert!(err_cfg.contains("AI_INFRA_RESTRICT_ROOT"), "{err_cfg}");
+    }
+
+    #[test]
+    fn recognizes_antigravity_and_gemini_extension_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let agy_dir = tmp.path().join("agy");
+        fs::create_dir_all(agy_dir.join(".antigravity-plugin")).unwrap();
+        fs::write(agy_dir.join(".antigravity-plugin/plugin.json"), "{}").unwrap();
+        assert!(is_plugin_dir(&agy_dir));
+
+        let gem_dir = tmp.path().join("gem");
+        fs::create_dir_all(gem_dir.join(".gemini-plugin")).unwrap();
+        fs::write(gem_dir.join(".gemini-plugin/plugin.json"), "{}").unwrap();
+        assert!(is_plugin_dir(&gem_dir));
+
+        let bin_cfg = tmp.path().join("bin-cfg");
+        fs::create_dir_all(bin_cfg.join("bin")).unwrap();
+        fs::write(bin_cfg.join("bin/ai-infra-mod"), "").unwrap();
+        fs::write(bin_cfg.join("plugin.json"), "{}").unwrap();
+        fs::write(bin_cfg.join("mcp_config.json"), "{}").unwrap();
+        assert!(is_plugin_dir(&bin_cfg));
+
+        let cache1 = tmp
+            .path()
+            .join(".gemini")
+            .join("config")
+            .join("plugins")
+            .join("ai-infra-mod");
+        fs::create_dir_all(&cache1).unwrap();
+        assert!(is_plugin_dir(&cache1));
+
+        let cache2 = tmp.path().join(".antigravity").join("plugins").join("mod");
+        fs::create_dir_all(&cache2).unwrap();
+        assert!(is_plugin_dir(&cache2));
+
+        let plain_repo = tmp.path().join("plain-repo");
+        fs::create_dir_all(&plain_repo).unwrap();
+        assert!(!is_plugin_dir(&plain_repo));
     }
 }

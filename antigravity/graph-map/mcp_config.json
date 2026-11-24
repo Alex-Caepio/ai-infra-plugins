@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "graph-map": {
+      "command": "./bin/graph-map",
+      "args": [
+        "mcp"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

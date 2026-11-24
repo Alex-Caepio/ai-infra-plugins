@@ -1,27 +1,28 @@
 # ai-infra-plugins
 
-Standalone, dual-compatible **Claude Code (`2.1.278`+)** and **Codex CLI (`0.169.0`)** plugin marketplace (plus unified `.mcpb` Claude Desktop Extension) extracted from `AI-Infrastructure` (`PR #98–#112`).
+Standalone, cross-platform **Claude Code (`2.1.278`+)**, **Codex CLI (`0.169.0`)**, **Google Antigravity Extensions**, and **Claude Desktop (`.mcpb`)** plugin suite & marketplace extracted from `AI-Infrastructure` (`PR #98–#112`).
 
-Every plugin in `./plugins/` is self-contained (zero path/runtime dependencies back to `AI-Infrastructure`, zero `target/` or root `CLAUDE.md`), ships stripped Linux x86_64 Rust binaries in `bin/`, exposes a stdio JSON-RPC `2025-06-18` MCP server (`<bin> mcp`), and provides dual `.claude-plugin/` + `.codex-plugin/` manifests, `skills/`, `commands/`, and (where applicable) `hooks/`.
+Every plugin in `./plugins/` and native extension in `./antigravity/` is self-contained (zero path/runtime dependencies back to `AI-Infrastructure`, zero `target/` or root `CLAUDE.md`), ships stripped Linux x86_64 Rust binaries in `bin/`, exposes a stdio JSON-RPC `2025-06-18` MCP server (`<bin> mcp`), and shares uniform `plugin-cwd` guardrails across Claude, Codex, and Antigravity (`~/.gemini/config/plugins/<name>/`).
 
 ## Plugins Summary
 
 | Plugin | Version | Binary (`bin/`, stripped ELF) | Verified Tests | MCP Tools | Skills / Commands / Hooks | Highlights |
 | :--- | :---: | :--- | :---: | :---: | :---: | :--- |
 | **`graph-map`** | `0.2.0` | `graph-map` (`42M`) | `615/615` | `16` | `4` / `3` / — | 13-language native AST graph engine (`tree-sitter` IR, zero external Python required), Cargo/git/PR blast-radius, layers/cycles/test-reach, Claude/Codex/Harness run audit, embedded WASM Canvas2D/SVG UI (`1.7M` `graph_map_ui_bg.wasm`), CSRF-protected HTTP/SSE API. |
-| **`system-orchestration`** | `0.1.0` | `orch-engine` (`38M`) | `958/959` (`1` gated) | `25` | `6` / `6` / `3` | Multi-repo `system` plan/execute, embedded **Omnigraph** (`system_graph` + interactive explorer), live SSE stream & permission prompts/rules, session scheduler & inbox, fleet review, clash debate, SDD delivery previews, SQLite `RunWorkingMemory`, `attach`, embedded WASM UI (`6.5M` `orch_ui_bg.wasm`). |
-| **`context-graph`** | `0.1.0` | `context-graph-engine` (`13M`) | `166/166` | `17` | `6` / `8` / `6` (`3` matchers) | Project Brain, Memory Bank, SQLite FTS5 retrieval, unified N-hop `graph_nodes`/`graph_edges`, **Omnigraph** atoms & branch `merge-keep` integration, session handoffs, SHA-256 `context-graph-bundle-v1` export/import, memory hooks (`hooks/hooks.json` auto-loaded). |
-| **`skill-foundry`** | `0.1.0` | `skill-foundry` (`7.1M`) | `22/22` | `8` | `4` / `4` / — | Skill scaffold/validate/package, SQLite WAL `QueryMemoCache` + Gate-1 prefilter, ROI-tracked optimization, SkillCache multi-arm economics `benchmark` (`model_calls`, `deopt_rate`, `list_price_usd`, `compile_usd`, `breakeven_reuses`), SHA-256 `cl100k` budget linter, `8+4` `vet-skill`, dual-host BTE `cost-audit`, hardened standalone HTML/OOXML review UI. |
-| **`agent-guardrails`** | `0.1.0` | `guardrails` (`3.0M`) | `18/18` | `4` | `2` / `2` / `5` | POSIX AST `bash-guard` (`rg --pre`/dangerous commands), `$TMPDIR` command & error-signature-scoped `edit-loop` breakers (`PostToolUse` `Bash\|Write\|Edit\|MultiEdit\|NotebookEdit`), settled naming checks, `/tmp` `flock` + `O_NOFOLLOW` write locks, 7 presets + custom `.agent-guardrails/policy.json`. |
-| **`skillcache`** | `0.1.0` | `skillcache-engine` (`9.1M`) | `136/136` | `9` | `3` / `4` / — | Standalone SkillCache trace compiler (`active`/`hybrid`/`textual` capsules), static Gate-1 dataflow/secret validator, network-isolated Gate-2/Gate-3 `bwrap`/`--unshare-net` sandbox executor, private SQLite capsule lifecycle (`invalidate`, `requalify`, `retire`), multicall `skillcache-run`/`skillcache-tool`. |
-| **`ai-infra-mod`** *(Unified Suite + `.mcpb`)* | `0.2.0` | `ai-infra-mod` (`740K`) + `6` sibling ELFs in `bin/` | `6/6` | `80` (`79` + `mod_status`) | `7` / `12` (`mod-*`) / `9` | Single multiplexed 80-tool MCP router, 9-role unified hook router, CLI suite router across all 6 engines, `AI_INFRA_ROOT` + `AI_INFRA_RESTRICT_ROOT=1` containment, and Claude Desktop `.mcpb` v0.2.0 bundle (`dist/ai-infra-mod.mcpb`, `38.3 MiB`). |
-| **Marketplace Total (`7` plugins)** | — | **7 standalone + unified binaries** | **`1,921` passed (`1` ignored)** | **`79` modular / `80` suite** | **`25`+`7` / `27`+`12` / `14`+`9`** | **Plugin-dir `cwd` guard & containment across all servers; Claude + Codex + `.mcpb` validated.** |
+| **`system-orchestration`** | `0.1.0` | `orch-engine` (`38M`) | `961/962` (`1` gated) | `25` | `6` / `6` / `3` | Multi-repo `system` plan/execute, embedded **Omnigraph** (`system_graph` + interactive explorer), live SSE stream & permission prompts/rules, session scheduler & inbox, fleet review, clash debate, SDD delivery previews, SQLite `RunWorkingMemory`, `attach`, Antigravity `subagent-gate`/`dispatch`, embedded WASM UI (`6.5M` `orch_ui_bg.wasm`). |
+| **`context-graph`** | `0.1.0` | `context-graph-engine` (`13M`) | `169/169` | `17` | `6` / `8` / `6` (`3` matchers) | Project Brain, Memory Bank, SQLite FTS5 retrieval, unified N-hop `graph_nodes`/`graph_edges`, **Omnigraph** atoms & branch `merge-keep` integration, session handoffs, SHA-256 `context-graph-bundle-v1` export/import, Claude/Codex/Antigravity memory hooks. |
+| **`skill-foundry`** | `0.1.0` | `skill-foundry` (`7.1M`) | `23/23` | `8` | `4` / `4` / — | Skill scaffold/validate/package, SQLite WAL `QueryMemoCache` + Gate-1 prefilter, ROI-tracked optimization, SkillCache multi-arm economics `benchmark` (`model_calls`, `deopt_rate`, `list_price_usd`, `compile_usd`, `breakeven_reuses`), SHA-256 `cl100k` budget linter, `8+4` `vet-skill`, dual-host BTE `cost-audit`, hardened standalone HTML/OOXML review UI. |
+| **`agent-guardrails`** | `0.1.0` | `guardrails` (`3.0M`) | `20/20` | `4` | `2` / `2` / `5` | POSIX AST `bash-guard` (`rg --pre`/dangerous commands), `$TMPDIR` command & error-signature-scoped `edit-loop` breakers (`PostToolUse`), settled naming checks, `/tmp` `flock` + `O_NOFOLLOW` write locks, 7 presets + Claude/Codex/Antigravity hooks. |
+| **`skillcache`** | `0.1.0` | `skillcache-engine` (`9.2M`) | `138/138` | `9` | `3` / `4` / — | Standalone SkillCache trace compiler (`active`/`hybrid`/`textual` capsules), static Gate-1 dataflow/secret validator, network-isolated Gate-2/Gate-3 `bwrap`/`--unshare-net` sandbox executor, private SQLite capsule lifecycle (`invalidate`, `requalify`, `retire`), multicall `skillcache-run`/`skillcache-tool`. |
+| **`ai-infra-mod`** *(Unified Suite + `.mcpb`)* | `0.2.0` | `ai-infra-mod` (`764K`) + `6` sibling ELFs in `bin/` | `8/8` | `80` (`79` + `mod_status`) | `7` / `12` (`mod-*`) / `9` | Single multiplexed 80-tool MCP router, 9-role unified hook router (Claude, Codex & Antigravity native JSON), CLI suite router across all 6 engines, `AI_INFRA_ROOT` + `AI_INFRA_RESTRICT_ROOT=1` containment, and `.mcpb` v0.2.0 bundle (`dist/ai-infra-mod.mcpb`, `40,590,139` bytes). |
+| **Marketplace Total (`7` plugins)** | — | **7 standalone + unified binaries** | **`1,934` passed (`1` ignored)** | **`79` modular / `80` suite** | **`25`+`7` / `27`+`12` / `14`+`9`** | **Plugin-dir `cwd` guard & containment across Claude Code, Codex CLI, Antigravity Extensions, and `.mcpb`.** |
 
-> Подробный архитектурный анализ и матрица декуплинга (`PR #98–#112`, на русском): [`ANALYSIS.md`](./ANALYSIS.md).
+> Подробный архитектурный анализ и матрица декуплинга (`PR #98–#112`, на русском): [`ANALYSIS.md`](./ANALYSIS.md).  
+> Native Antigravity Extensions catalog, zip builder, and hook/agent mapping: [`antigravity/README.md`](./antigravity/README.md).
 
-## Standalone GitHub Repositories
+## Standalone GitHub Repositories & Releases
 
-- Marketplace: <https://github.com/Alex-Caepio/ai-infra-plugins>
+- Marketplace & Antigravity Releases (`antigravity-v0.2.0`): <https://github.com/Alex-Caepio/ai-infra-plugins>
 - `ai-infra-mod` *(all-in-one suite + `.mcpb`)*: <https://github.com/Alex-Caepio/ai-infra-mod>
 - `graph-map`: <https://github.com/Alex-Caepio/graph-map>
 - `system-orchestration`: <https://github.com/Alex-Caepio/system-orchestration>
@@ -29,6 +30,24 @@ Every plugin in `./plugins/` is self-contained (zero path/runtime dependencies b
 - `skill-foundry`: <https://github.com/Alex-Caepio/skill-foundry>
 - `agent-guardrails`: <https://github.com/Alex-Caepio/agent-guardrails>
 - `skillcache`: <https://github.com/Alex-Caepio/skillcache>
+
+## Google Antigravity Extensions (`antigravity/`)
+
+Self-contained native Antigravity Extensions live under [`antigravity/`](./antigravity/) alongside [`antigravity/marketplace.json`](./antigravity/marketplace.json) and [`antigravity/build-antigravity.sh`](./antigravity/build-antigravity.sh):
+
+- **`ai-infra-mod` (`0.2.0`, enabled by default `"disabled": false`)**: `80` disambiguated MCP tools (`mcp_config.json`), native lifecycle hooks (`SessionStart`, `PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`), `rules/AGENTS.md`, `19` unique skills (`skills/`), and `6` native subagents (`agents/`).
+- **`6` modular extensions (`"disabled": true` by default)**: `graph-map`, `system-orchestration`, `context-graph`, `skill-foundry`, `agent-guardrails`, and `skillcache` — toggleable individually without duplicate hooks or tool collisions (`71` skills and `17` agents total across all 7 extensions).
+- **Antigravity Release Archives (`antigravity-v0.2.0`)**: downloadable `.zip` packages verified by `sha256` in `antigravity/marketplace.json`, preserving Unix `0755` executable permissions on `bin/*`.
+
+```bash
+# Install via Antigravity CLI from remote marketplace or local checkout
+agy plugin validate --strict ./antigravity/marketplace.json
+agy plugin install https://github.com/Alex-Caepio/ai-infra-plugins/releases/download/antigravity-v0.2.0/ai-infra-mod-antigravity.zip
+
+# Or install all 7 extensions locally into ~/.gemini/config/plugins/ and build .zip archives
+./antigravity/build-antigravity.sh --install --dist-dir ./dist/antigravity
+agy plugin list --json
+```
 
 ## Claude Code Installation & Validation
 
@@ -57,7 +76,7 @@ claude --plugin-dir ./plugins/ai-infra-mod
 
 ## Claude Desktop Extension (`.mcpb`)
 
-Install the prebuilt Desktop Extension (`0.2.0`, `38.3 MiB` / `40,150,506` bytes) from [`plugins/ai-infra-mod/dist/ai-infra-mod.mcpb`](./plugins/ai-infra-mod/dist/ai-infra-mod.mcpb) via **Claude Desktop -> Settings -> Extensions**:
+Install the prebuilt Desktop Extension (`0.2.0`, `40,590,139` bytes, `sha256: f4734876c128e473540ee2a73c1a7cc4911f3ad32dcec6b8deb0bcc58f18ccfe`) from [`plugins/ai-infra-mod/dist/ai-infra-mod.mcpb`](./plugins/ai-infra-mod/dist/ai-infra-mod.mcpb) (also attached to GitHub Release `antigravity-v0.2.0`) via **Claude Desktop -> Settings -> Extensions**:
 
 - Configures `server.type: "binary"` (`${__dirname}/bin/ai-infra-mod mcp`) with all 6 sibling ELFs (`graph-map`, `orch-engine`, `context-graph-engine`, `skill-foundry`, `guardrails`, `skillcache-engine`) bundled in `bin/`.
 - Prompts once for `user_config.projectDir`, exporting `AI_INFRA_ROOT` and `AI_INFRA_RESTRICT_ROOT=1` so all 80 tools canonicalize paths inside `AI_INFRA_ROOT` and reject path-escape attempts (`isError: true`).
@@ -83,7 +102,7 @@ codex plugin add skillcache@ai-infra-plugins
 codex plugin list --json
 ```
 
-**Important note on Codex MCP `cwd` safety**: Every `.codex-mcp.json` runs `"command": "./bin/<binary>"` with `"cwd": "."` (the cached plugin directory). Because that directory may sit beneath an ancestor `.git` / `.claude` / `.agents`, all 7 MCP servers detect plugin/cache `cwd` BEFORE walking ancestors and reject omitted or `"."`/`"./."` target arguments (`isError: true`) rather than silently mutating `~/` or the plugin cache (unless `AI_INFRA_ROOT` or MCP `roots/list` is provided). Always pass explicit `"project"` / `"root"` / `"path"` pointing to your target repository when calling MCP tools.
+**Important note on MCP `cwd` safety**: `.codex-mcp.json` uses `"command": "./bin/<binary>"` with `"cwd": "."`, and Antigravity `mcp_config.json` uses `"cwd": "${PLUGIN_ROOT}"`. All 7 MCP servers detect Claude (`~/.claude/plugins/cache`), Codex (`~/.codex/plugins/cache`), and Antigravity (`~/.gemini/config/plugins` / `plugin.json` / `mcp_config.json`) plugin directories BEFORE walking ancestors and reject omitted or `"."`/`"./."` target arguments (`isError: true`) unless `AI_INFRA_ROOT` or MCP `roots/list` is provided. Always pass explicit `"project"` / `"root"` / `"path"` pointing to your target repository when calling MCP tools.
 
 ## Direct CLI & MCP Smoke Checks
 

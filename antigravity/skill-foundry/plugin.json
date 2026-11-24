@@ -1,0 +1,19 @@
+{
+  "name": "skill-foundry",
+  "displayName": "Skill Foundry",
+  "version": "0.1.0",
+  "description": "Engineering workbench for Agent Skills: scaffold, validate, package, run cross-CLI trigger evals, optimize descriptions, lint token budgets, vet security risks, and audit Claude/Codex token cost.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Validate skills and check calibrated token budgets in this repository",
+    "Vet a skill directory against the 8 binary and 4 scored security gates",
+    "Audit recent Claude and Codex BTE token spend by project, skill, and MCP tool"
+  ],
+  "author": {
+    "name": "Alex-Caepio",
+    "url": "https://github.com/Alex-Caepio/skill-foundry"
+  },
+  "homepage": "https://github.com/Alex-Caepio/skill-foundry",
+  "repository": "https://github.com/Alex-Caepio/skill-foundry",
+  "disabled": true
+}

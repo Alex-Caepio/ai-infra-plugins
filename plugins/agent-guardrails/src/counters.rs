@@ -17,6 +17,7 @@ pub fn session_id(payload: &Value) -> String {
     let source = payload["session_id"]
         .as_str()
         .or_else(|| payload["conversation_id"].as_str())
+        .or_else(|| payload["conversationId"].as_str())
         .unwrap_or("");
     let value: String = source
         .chars()

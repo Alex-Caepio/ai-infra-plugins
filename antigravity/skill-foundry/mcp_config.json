@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "skill-foundry": {
+      "command": "./bin/skill-foundry",
+      "args": ["mcp"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

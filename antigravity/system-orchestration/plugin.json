@@ -1,0 +1,19 @@
+{
+  "name": "system-orchestration",
+  "displayName": "System Orchestration",
+  "version": "0.1.0",
+  "description": "Multi-service orchestration, supervised agent sessions, live approval permission modes, cross-service dependency bridges, fleet/clash review, SQLite working memory, and Omnigraph context sync.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Catalog services and build an impact-scoped multi-service orchestration plan",
+    "Run a multi-lens Fleet code review or two-provider Clash debate",
+    "Inspect system graph status, Omnigraph branch diffs, or launch the orchestration workbench"
+  ],
+  "author": {
+    "name": "Alex-Caepio",
+    "url": "https://github.com/Alex-Caepio/system-orchestration"
+  },
+  "homepage": "https://github.com/Alex-Caepio/system-orchestration",
+  "repository": "https://github.com/Alex-Caepio/system-orchestration",
+  "disabled": true
+}

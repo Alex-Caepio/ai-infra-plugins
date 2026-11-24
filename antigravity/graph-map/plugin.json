@@ -1,0 +1,19 @@
+{
+  "name": "graph-map",
+  "displayName": "Graph Map",
+  "version": "0.2.0",
+  "description": "Standalone interactive code-graph explorer with native 13-language tree-sitter AST + SQLite IR, commit/PR/range diffs, test reach, linked project memory, architectural layers, and Canvas2D WASM UI.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Map current work impact, linked project memory, and test reach on this repository",
+    "Audit architectural layers, module boundaries, and shortest dependency cycles",
+    "Inspect commit range changes or launch the localhost Canvas2D Dependency Map UI"
+  ],
+  "author": {
+    "name": "Alex-Caepio",
+    "url": "https://github.com/Alex-Caepio/graph-map"
+  },
+  "homepage": "https://github.com/Alex-Caepio/graph-map",
+  "repository": "https://github.com/Alex-Caepio/graph-map",
+  "disabled": true
+}

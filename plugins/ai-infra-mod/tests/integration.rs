@@ -783,3 +783,232 @@ fn hooks_and_cli_status_and_passthrough_work_end_to_end() {
         .unwrap();
     assert!(sc_cli.status.success(), "skillcache status passthrough failed");
 }
+
+#[test]
+fn antigravity_hooks_and_gemini_plugin_cwd_guard() {
+    let tmp = tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join(".antigravity/agents")).unwrap();
+    std::fs::create_dir_all(repo.join(".gemini/skills/demo")).unwrap();
+    init_git_repo(&repo);
+    std::fs::write(
+        repo.join(".antigravity/agents/php-writer.md"),
+        "---\nname: php-writer\nwrites: true\n---\n\nWrite agent\n",
+    )
+    .unwrap();
+
+    // 1. Fake `.gemini/config/plugins/ai-infra-mod` with `plugin.json` + `mcp_config.json` + `bin/ai-infra-mod` triggers `plugin-cwd` guard!
+    let agy_plugin = tmp
+        .path()
+        .join(".gemini")
+        .join("config")
+        .join("plugins")
+        .join("ai-infra-mod");
+    std::fs::create_dir_all(agy_plugin.join("bin")).unwrap();
+    std::fs::write(agy_plugin.join("bin/ai-infra-mod"), "").unwrap();
+    std::fs::write(agy_plugin.join("plugin.json"), "{}").unwrap();
+    std::fs::write(agy_plugin.join("mcp_config.json"), "{}").unwrap();
+
+    let mut mcp = Command::new(mod_bin())
+        .arg("mcp")
+        .current_dir(&agy_plugin)
+        .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+        .env("HOME", tmp.path())
+        .env("XDG_STATE_HOME", tmp.path().join("xdg"))
+        .env_remove("AI_INFRA_ROOT")
+        .env_remove("ROOT_DIR")
+        .env_remove("AI_INFRA_RESTRICT_ROOT")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = mcp.stdin.take().unwrap();
+    let mut stdout = BufReader::new(mcp.stdout.take().unwrap());
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "capabilities": {} } }),
+    );
+    writeln!(
+        stdin,
+        "{}",
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    for (id, tool, args) in [
+        (2, "graph_status", json!({})),
+        (3, "omnigraph_status", json!({ "project": "." })),
+        (4, "skillcache_status", json!({ "project": "./." })),
+    ] {
+        let resp = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": tool, "arguments": args } }),
+        );
+        assert_eq!(resp["result"]["isError"], true, "{tool}: {resp}");
+    }
+    let ok_call = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "omnigraph_status", "arguments": { "project": repo } } }),
+    );
+    assert_eq!(ok_call["result"]["isError"], false, "{ok_call}");
+    drop(stdin);
+    assert!(mcp.wait().unwrap().success());
+
+    // 2. Native Antigravity hooks (`antigravity`, `agy`, and auto-detected camelCase stdin) across all roles
+    let run_hook = |args: &[&str], body: &Value| {
+        let mut h = Command::new(mod_bin())
+            .args(args)
+            .env("AI_INFRA_BIN_DIR", staged_bin_dir())
+            .env("HOME", tmp.path())
+            .env("XDG_STATE_HOME", tmp.path().join("xdg"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        h.stdin
+            .take()
+            .unwrap()
+            .write_all(serde_json::to_string(body).unwrap().as_bytes())
+            .unwrap();
+        h.wait_with_output().unwrap()
+    };
+
+    // session-start
+    let ss = run_hook(
+        &["hook", "antigravity", "session-start"],
+        &json!({ "hookEventName": "SessionStart", "workspacePaths": [&repo], "conversationId": "c1" }),
+    );
+    assert_eq!(ss.status.code(), Some(0));
+    let ss_j: Value = serde_json::from_slice(&ss.stdout).unwrap();
+    assert!(ss_j.is_object(), "{ss_j}");
+
+    // pre-invocation (auto-detected camelCase without explicit host)
+    let pi = run_hook(
+        &["hook", "pre-invocation"],
+        &json!({ "hookEventName": "PreInvocation", "workspacePaths": [&repo], "conversationId": "c1" }),
+    );
+    assert_eq!(pi.status.code(), Some(0));
+    let pi_j: Value = serde_json::from_slice(&pi.stdout).unwrap();
+    assert!(pi_j.is_object(), "{pi_j}");
+
+    // pre-bash deny & allow (exit 0 JSON)
+    let pb_deny = run_hook(
+        &["hook", "agy", "pre-bash"],
+        &json!({
+            "hookEventName": "PreToolUse",
+            "workspacePaths": [&repo],
+            "toolCall": { "name": "run_command", "args": { "CommandLine": "rm -rf /" } }
+        }),
+    );
+    assert_eq!(pb_deny.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&pb_deny.stdout).unwrap()["decision"],
+        "deny"
+    );
+
+    let pb_allow = run_hook(
+        &["hook", "antigravity", "pre-bash"],
+        &json!({
+            "hookEventName": "PreToolUse",
+            "workspacePaths": [&repo],
+            "toolCall": { "name": "run_command", "args": { "CommandLine": "git status" } }
+        }),
+    );
+    assert_eq!(pb_allow.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&pb_allow.stdout).unwrap()["decision"],
+        "allow"
+    );
+
+    // pre-write-edit allow (SKILL.md)
+    let pw_ok = run_hook(
+        &["hook", "antigravity", "pre-write-edit"],
+        &json!({
+            "hookEventName": "PreToolUse",
+            "workspacePaths": [&repo],
+            "toolCall": {
+                "name": "write_to_file",
+                "args": { "TargetFile": repo.join(".gemini/skills/demo/SKILL.md") }
+            }
+        }),
+    );
+    assert_eq!(pw_ok.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&pw_ok.stdout).unwrap()["decision"],
+        "allow"
+    );
+
+    // post-write-edit -> `{}` exit 0
+    let pe = run_hook(
+        &["hook", "antigravity", "post-write-edit"],
+        &json!({
+            "hookEventName": "PostToolUse",
+            "workspacePaths": [&repo],
+            "conversationId": "c1",
+            "toolCall": {
+                "name": "write_to_file",
+                "args": { "TargetFile": repo.join("README.md") }
+            }
+        }),
+    );
+    assert_eq!(pe.status.code(), Some(0));
+    assert_eq!(serde_json::from_slice::<Value>(&pe.stdout).unwrap(), json!({}));
+
+    // pre-subagent allow -> concurrent deny -> post-subagent `{}` releases both -> allow!
+    let sub_pre = json!({
+        "hookEventName": "PreToolUse",
+        "workspacePaths": [&repo],
+        "conversationId": "c1",
+        "toolCall": {
+            "name": "invoke_subagent",
+            "args": { "TypeName": "php-writer", "Prompt": "Edit", "Workspace": "inherit" }
+        }
+    });
+    let sg1 = run_hook(&["hook", "antigravity", "pre-subagent"], &sub_pre);
+    assert_eq!(sg1.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&sg1.stdout).unwrap()["decision"],
+        "allow"
+    );
+
+    let sg2 = run_hook(&["hook", "pre-subagent"], &sub_pre);
+    assert_eq!(sg2.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&sg2.stdout).unwrap()["decision"],
+        "deny"
+    );
+
+    let sub_post = json!({
+        "hookEventName": "PostToolUse",
+        "workspacePaths": [&repo],
+        "conversationId": "c1",
+        "toolCall": {
+            "name": "invoke_subagent",
+            "args": { "Role": "php-writer", "Prompt": "Done", "Workspace": "inherit" }
+        }
+    });
+    let sp = run_hook(&["hook", "antigravity", "post-subagent"], &sub_post);
+    assert_eq!(sp.status.code(), Some(0));
+    assert_eq!(serde_json::from_slice::<Value>(&sp.stdout).unwrap(), json!({}));
+
+    let sg3 = run_hook(&["hook", "antigravity", "pre-subagent"], &sub_pre);
+    assert_eq!(sg3.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&sg3.stdout).unwrap()["decision"],
+        "allow"
+    );
+    let _ = run_hook(&["hook", "antigravity", "post-subagent"], &sub_post);
+
+    // stop -> `{}` exit 0
+    let stp = run_hook(
+        &["hook", "antigravity", "stop"],
+        &json!({ "hookEventName": "Stop", "workspacePaths": [&repo], "conversationId": "c1" }),
+    );
+    assert_eq!(stp.status.code(), Some(0));
+    assert_eq!(serde_json::from_slice::<Value>(&stp.stdout).unwrap(), json!({}));
+}

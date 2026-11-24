@@ -24,8 +24,16 @@ const EDIT_TOOLS: &[&str] = &[
     "notebookedit",
     "notebook_edit",
     "apply_patch",
+    "write_to_file",
+    "write_file",
+    "replace_file_content",
+    "multi_replace_file_content",
+    "edit_file",
+    "find_by_name",
 ];
 const CHECK_TOOLS: &[&str] = &["bash", "shell", "terminal", "run_command"];
+const COMMAND_KEYS: &[&str] = &["command", "cmd", "CommandLine", "command_line"];
+const PATH_KEYS: &[&str] = &["file_path", "path", "TargetFile", "AbsolutePath", "TargetFiles"];
 const SKILL_CACHE_RACY_NS: i128 = 2_000_000_000;
 
 #[cfg(test)]
@@ -92,19 +100,27 @@ pub fn first<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     }
 }
 
-/// Recursively collect unique non-empty strings matching any of `keys`.
+/// Recursively collect unique non-empty strings (including string array elements) matching `keys`.
 pub fn strings(value: &Value, keys: &[&str]) -> Vec<String> {
+    fn push_unique(output: &mut Vec<String>, candidate: &str) {
+        if !candidate.is_empty() && !output.iter().any(|prior| prior == candidate) {
+            output.push(candidate.into());
+        }
+    }
     fn visit(value: &Value, keys: &[&str], output: &mut Vec<String>) {
         match value {
             Value::Object(map) => {
                 for key in keys {
-                    if let Some(v) = map
-                        .get(*key)
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.is_empty())
-                        && !output.iter().any(|prior| prior == v)
-                    {
-                        output.push(v.into());
+                    if let Some(found) = map.get(*key) {
+                        match found {
+                            Value::String(v) => push_unique(output, v),
+                            Value::Array(items) => {
+                                for s in items.iter().filter_map(Value::as_str) {
+                                    push_unique(output, s);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 for child in map.values() {
@@ -124,8 +140,22 @@ pub fn strings(value: &Value, keys: &[&str]) -> Vec<String> {
     output
 }
 
+fn tool_names(payload: &Value) -> Vec<String> {
+    let mut tools = strings(payload, &["tool_name"]);
+    if let Some(tc_name) = payload
+        .get("toolCall")
+        .and_then(|tc| tc.get("name"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        && !tools.iter().any(|prior| prior == tc_name)
+    {
+        tools.push(tc_name.into());
+    }
+    tools
+}
+
 fn allowed_tool(payload: &Value, names: &[&str]) -> bool {
-    let tools = strings(payload, &["tool_name"]);
+    let tools = tool_names(payload);
     tools.is_empty()
         || tools.iter().any(|tool| {
             let normalized = tool
@@ -181,7 +211,13 @@ fn check_outcome(payload: &Value, command: &str, err_sig: &str) -> CheckOutcome 
     );
     let explicit_ok = bool_field(payload, &["passed", "ok", "success"]);
     let status_str = first(payload, "status").map(str::to_ascii_lowercase);
+    let has_error_field = ["error", "stderr", "last_error", "tool_error"]
+        .iter()
+        .any(|k| first(payload, k).is_some());
+    let agy_post =
+        payload.get("hookEventName").and_then(Value::as_str) == Some("PostToolUse");
     if !err_sig.is_empty()
+        || has_error_field
         || exit_code.is_some_and(|code| code != 0)
         || explicit_ok == Some(false)
         || matches!(
@@ -196,7 +232,11 @@ fn check_outcome(payload: &Value, command: &str, err_sig: &str) -> CheckOutcome 
             || matches!(
                 status_str.as_deref(),
                 Some("passed" | "pass" | "ok" | "success" | "succeeded")
-            ))
+            )
+            || (agy_post
+                && exit_code.is_none()
+                && explicit_ok.is_none()
+                && status_str.is_none()))
     {
         CheckOutcome::Passing
     } else {
@@ -217,11 +257,11 @@ fn combine_command_error_signature(normalized_cmd: &str, err_sig: &str) -> Strin
 }
 
 fn is_check_event(payload: &Value) -> bool {
-    let has_cmd = first(payload, "command").is_some() || first(payload, "cmd").is_some();
+    let has_cmd = COMMAND_KEYS.iter().any(|k| first(payload, k).is_some());
     if !has_cmd {
         return false;
     }
-    let tools = strings(payload, &["tool_name"]);
+    let tools = tool_names(payload);
     (!tools.is_empty() && allowed_tool(payload, CHECK_TOOLS))
         || integer_field(
             payload,
@@ -231,11 +271,12 @@ fn is_check_event(payload: &Value) -> bool {
         || bool_field(payload, &["passed", "ok", "success"]).is_some()
         || first(payload, "status").is_some()
         || !normalized_error_signature(payload).is_empty()
+        || first(payload, "error").is_some()
 }
 
 fn payload_noop(role: &str, payload: &Value) -> bool {
     match role {
-        "bash-guard" => first(payload, "command").is_none() && first(payload, "cmd").is_none(),
+        "bash-guard" => COMMAND_KEYS.iter().all(|k| first(payload, k).is_none()),
         "naming-check" => !allowed_tool(payload, EDIT_TOOLS),
         "edit-loop" => !allowed_tool(payload, EDIT_TOOLS) && !is_check_event(payload),
         _ => false,
@@ -259,10 +300,24 @@ fn debugger_hint(host: &str) -> &'static str {
     }
 }
 
-/// Infer client host (`claude`, `codex`, or `cursor`) when not passed explicitly.
+fn normalize_host(raw: &str) -> String {
+    match raw.to_ascii_lowercase().as_str() {
+        "agy" | "antigravity" => "antigravity".into(),
+        other => other.into(),
+    }
+}
+
+/// Infer client host (`antigravity`, `claude`, `codex`, or `cursor`) when not passed explicitly.
 pub fn detect_host(explicit: Option<&str>, payload: &Value) -> String {
     if let Some(host) = explicit {
-        return host.to_ascii_lowercase();
+        return normalize_host(host);
+    }
+    if payload.get("hookEventName").is_some()
+        || payload.get("toolCall").is_some()
+        || payload.get("workspacePaths").is_some()
+        || payload.get("conversationId").is_some()
+    {
+        return "antigravity".into();
     }
     if payload.get("cursor_version").is_some() || payload.get("workspace_roots").is_some() {
         return "cursor".into();
@@ -276,7 +331,7 @@ pub fn detect_host(explicit: Option<&str>, payload: &Value) -> String {
     "claude".into()
 }
 
-/// Infer project root from explicit `--root`, host env/payload `cwd`, and ancestor scan.
+/// Infer project root from explicit `--root`, host env/payload `cwd` or `workspacePaths`, and ancestor scan.
 pub fn resolve_root(explicit: Option<&Path>, payload: Option<&Value>) -> PathBuf {
     if let Some(path) = explicit {
         return custody::discover_repo_root(path);
@@ -287,6 +342,15 @@ pub fn resolve_root(explicit: Option<&Path>, payload: Option<&Value>) -> PathBuf
         }
         if let Some(first_ws) = p
             .get("workspace_roots")
+            .and_then(Value::as_array)
+            .and_then(|arr| arr.first())
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            return custody::discover_repo_root(Path::new(first_ws));
+        }
+        if let Some(first_ws) = p
+            .get("workspacePaths")
             .and_then(Value::as_array)
             .and_then(|arr| arr.first())
             .and_then(Value::as_str)
@@ -418,7 +482,7 @@ fn diagnostic_hint(normalized: &str, err_sig: &str, debugger_name: &str) -> Stri
 }
 
 fn bash_guard(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
-    let command = strings(payload, &["command", "cmd"]).join("\n");
+    let command = strings(payload, COMMAND_KEYS).join("\n");
     if command.is_empty() {
         return Ok(GuardOutput::default());
     }
@@ -601,10 +665,13 @@ fn skill_dirs(root: &Path, host: &str) -> Vec<PathBuf> {
     let primary = match host {
         "cursor" => root.join(".cursor/skills"),
         "codex" => root.join(".agents/skills"),
+        "antigravity" => root.join(".gemini/skills"),
         _ => root.join(".claude/skills"),
     };
     let mut dirs = vec![
         primary,
+        root.join(".gemini/skills"),
+        root.join(".antigravity/skills"),
         root.join(".agents/skills"),
         root.join(".claude/skills"),
         root.join(".cursor/skills"),
@@ -775,7 +842,7 @@ fn naming_check(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput>
     if !allowed_tool(payload, EDIT_TOOLS) {
         return Ok(GuardOutput::default());
     }
-    let mut paths: BTreeSet<String> = strings(payload, &["file_path", "path"]).into_iter().collect();
+    let mut paths: BTreeSet<String> = strings(payload, PATH_KEYS).into_iter().collect();
     patch_paths(payload, &mut paths);
     if paths.is_empty() {
         return Ok(GuardOutput::default());
@@ -797,7 +864,7 @@ fn naming_check(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput>
 
 fn edit_loop(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
     if is_check_event(payload) {
-        let command = strings(payload, &["command", "cmd"]).join("\n");
+        let command = strings(payload, COMMAND_KEYS).join("\n");
         let err_sig = normalized_error_signature(payload);
         let normalized = normalize_command_signature(&command);
         match check_outcome(payload, &command, &err_sig) {
@@ -815,18 +882,26 @@ fn edit_loop(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
         return Ok(GuardOutput::default());
     }
     let mut paths = BTreeSet::new();
-    if let Some(path) = first(payload, "file_path")
-        .or_else(|| {
-            if host == "claude" {
-                None
-            } else {
-                first(payload, "path")
-            }
-        })
-        .or_else(|| first(payload, "notebook_path"))
-    {
-        paths.insert(path.to_string());
+    if host == "claude" {
+        if let Some(path) = first(payload, "file_path").or_else(|| first(payload, "notebook_path")) {
+            paths.insert(path.to_string());
+        }
     } else {
+        for p in strings(
+            payload,
+            &[
+                "file_path",
+                "path",
+                "notebook_path",
+                "TargetFile",
+                "AbsolutePath",
+                "TargetFiles",
+            ],
+        ) {
+            paths.insert(p);
+        }
+    }
+    if paths.is_empty() {
         patch_paths(payload, &mut paths);
     }
     if paths.is_empty() {
@@ -838,7 +913,7 @@ fn edit_loop(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput> {
         source_path: None,
         strict_custody: false,
     });
-    let inline_cmd = strings(payload, &["command", "cmd"]).join("\n");
+    let inline_cmd = strings(payload, COMMAND_KEYS).join("\n");
     let inline_err = normalized_error_signature(payload);
     let inline_sig =
         combine_command_error_signature(&normalize_command_signature(&inline_cmd), &inline_err);
@@ -1072,11 +1147,19 @@ fn roster(root: &Path, host: &str, loaded: &LoadedPolicy) -> Result<BTreeMap<Str
     for name in &loaded.policy.subagent_gate.writer_agents {
         result.insert(name.clone(), true);
     }
-    let dir = root.join(if host == "cursor" {
-        ".cursor/agents"
-    } else {
-        ".claude/agents"
-    });
+    let dir = match host {
+        "cursor" => root.join(".cursor/agents"),
+        "antigravity" => {
+            if root.join(".gemini/agents").is_dir() {
+                root.join(".gemini/agents")
+            } else if root.join(".antigravity/agents").is_dir() {
+                root.join(".antigravity/agents")
+            } else {
+                root.join(".claude/agents")
+            }
+        }
+        _ => root.join(".claude/agents"),
+    };
     let cache_file = counters::directory(root)
         .ok()
         .map(|folder| folder.join(format!("agent-roster-cache-{host}.json")));
@@ -1157,10 +1240,16 @@ fn subagent_gate(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput
         }
         return gate_response(host, true, "");
     }
-    if host != "cursor" && !allowed_tool(payload, &["agent", "task"]) {
+    if host != "cursor" && !allowed_tool(payload, &["agent", "task", "invoke_subagent"]) {
         return gate_response(host, true, "");
     }
-    let Some(agent) = first(payload, "subagent_type").or_else(|| first(payload, "agent_type")) else {
+    let Some(agent) = first(payload, "subagent_type")
+        .or_else(|| first(payload, "agent_type"))
+        .or_else(|| first(payload, "TypeName"))
+        .or_else(|| first(payload, "Role"))
+        .or_else(|| first(payload, "type_name"))
+        .or_else(|| first(payload, "role"))
+    else {
         return gate_response(host, true, "");
     };
     let map = match roster(root, host, &loaded) {
@@ -1200,9 +1289,56 @@ fn subagent_gate(root: &Path, host: &str, payload: &Value) -> Result<GuardOutput
 fn subagent_release(root: &Path, payload: &Value) -> Result<GuardOutput> {
     let agent = first(payload, "agent_type")
         .or_else(|| first(payload, "subagent_type"))
+        .or_else(|| first(payload, "TypeName"))
+        .or_else(|| first(payload, "Role"))
+        .or_else(|| first(payload, "type_name"))
+        .or_else(|| first(payload, "role"))
         .unwrap_or("");
     let _ = counters::release_writer(root, agent);
     Ok(GuardOutput::default())
+}
+
+fn finalize_host_output(host: &str, role: &str, out: GuardOutput) -> Result<GuardOutput> {
+    if host != "antigravity" {
+        return Ok(out);
+    }
+    if matches!(role, "edit-loop" | "subagent-release") {
+        return GuardOutput::json(&json!({}));
+    }
+    if out.code != 0 {
+        let stderr_text = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout_text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let reason = if !stderr_text.is_empty() {
+            stderr_text
+        } else if !stdout_text.is_empty() {
+            stdout_text
+        } else {
+            "Blocked by agent-guardrails.".into()
+        };
+        return GuardOutput::json(&json!({
+            "decision": "deny",
+            "reason": reason,
+        }));
+    }
+    if !out.stdout.is_empty() {
+        let raw = String::from_utf8_lossy(&out.stdout);
+        let advisory = serde_json::from_str::<Value>(raw.trim())
+            .ok()
+            .and_then(|v| {
+                v.get("hookSpecificOutput")
+                    .and_then(|h| h.get("additionalContext"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| raw.trim().to_string());
+        if !advisory.is_empty() {
+            return GuardOutput::json(&json!({
+                "decision": "allow",
+                "reason": advisory,
+            }));
+        }
+    }
+    GuardOutput::json(&json!({"decision": "allow"}))
 }
 
 /// Normalize canonical & alias hook role strings.
@@ -1217,7 +1353,7 @@ pub fn normalize_role(role: &str) -> Option<&'static str> {
     }
 }
 
-/// Execute any hook role against raw stdin JSON bytes and host (`claude`/`codex`/`cursor`).
+/// Execute any hook role against raw stdin JSON bytes and host (`antigravity`/`claude`/`codex`/`cursor`).
 pub fn hook_execute(
     explicit_root: Option<&Path>,
     explicit_host: Option<&str>,
@@ -1227,22 +1363,23 @@ pub fn hook_execute(
     let role = normalize_role(raw_role)
         .ok_or_else(|| GuardError::invalid(format!("Unknown hook role: {raw_role}")))?;
     let payload = parse_payload(raw_stdin);
-    if payload_noop(role, &payload) {
-        return Ok(GuardOutput::default());
-    }
     let host = detect_host(explicit_host, &payload);
-    if !["claude", "codex", "cursor"].contains(&host.as_str()) {
+    if !["antigravity", "claude", "codex", "cursor"].contains(&host.as_str()) {
         return Err(GuardError::invalid(format!("Unsupported hook host: {host}")));
     }
-    let root = resolve_root(explicit_root, Some(&payload));
-    match role {
-        "bash-guard" => bash_guard(&root, &host, &payload),
-        "edit-loop" => edit_loop(&root, &host, &payload),
-        "naming-check" => naming_check(&root, &host, &payload),
-        "subagent-gate" => subagent_gate(&root, &host, &payload),
-        "subagent-release" => subagent_release(&root, &payload),
-        _ => Ok(GuardOutput::default()),
+    if payload_noop(role, &payload) {
+        return finalize_host_output(&host, role, GuardOutput::default());
     }
+    let root = resolve_root(explicit_root, Some(&payload));
+    let out = match role {
+        "bash-guard" => bash_guard(&root, &host, &payload)?,
+        "edit-loop" => edit_loop(&root, &host, &payload)?,
+        "naming-check" => naming_check(&root, &host, &payload)?,
+        "subagent-gate" => subagent_gate(&root, &host, &payload)?,
+        "subagent-release" => subagent_release(&root, &payload)?,
+        _ => GuardOutput::default(),
+    };
+    finalize_host_output(&host, role, out)
 }
 
 /// Direct CLI / MCP check of a single command without touching loop counters.

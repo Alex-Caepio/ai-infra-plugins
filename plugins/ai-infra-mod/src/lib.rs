@@ -19,7 +19,7 @@ fn usage() -> &'static str {
         "USAGE:\n",
         "  ai-infra-mod status [--project <dir>] [--json]\n",
         "  ai-infra-mod mcp\n",
-        "  ai-infra-mod hook [claude|codex|cursor] <role> [OPTIONS]\n",
+        "  ai-infra-mod hook [antigravity|agy|claude|codex|cursor] <role> [OPTIONS]\n",
         "  ai-infra-mod <graph|orch|context|skill|guard|skillcache> [SUBSYSTEM_ARGS...]\n",
         "  ai-infra-mod --help | --version\n"
     )

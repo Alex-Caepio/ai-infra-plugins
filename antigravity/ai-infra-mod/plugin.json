@@ -1,0 +1,19 @@
+{
+  "name": "ai-infra-mod",
+  "displayName": "AI Infrastructure Mod",
+  "version": "0.2.0",
+  "description": "Unified AI Infrastructure suite combining all 6 engines (80 MCP tools): 13-language code graph mapping, multi-service & Omnigraph orchestration, SQLite context memory, skill foundry, POSIX AST safety guardrails, and sandboxed SkillCache compilation.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Run the unified AI Infrastructure status check across all 6 subsystems on this workspace",
+    "Analyze code-change blast radius, linked project memory, and test reach before editing",
+    "Sync Omnigraph context, check POSIX AST guardrails, or compile recurring turns with SkillCache"
+  ],
+  "author": {
+    "name": "Alex-Caepio",
+    "url": "https://github.com/Alex-Caepio/ai-infra-mod"
+  },
+  "homepage": "https://github.com/Alex-Caepio/ai-infra-mod",
+  "repository": "https://github.com/Alex-Caepio/ai-infra-mod",
+  "disabled": false
+}

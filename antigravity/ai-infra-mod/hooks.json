@@ -1,0 +1,79 @@
+{
+  "ai-infra-mod-lifecycle": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "./bin/ai-infra-mod hook antigravity session-start",
+        "timeout": 12
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "./bin/ai-infra-mod hook antigravity pre-invocation",
+        "timeout": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/ai-infra-mod hook antigravity pre-bash",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "write_to_file|write_file|replace_file_content|edit_file|multi_replace_file_content|notebook_edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/ai-infra-mod hook antigravity pre-write-edit",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/ai-infra-mod hook antigravity pre-subagent",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "run_command|write_to_file|write_file|replace_file_content|edit_file|multi_replace_file_content|notebook_edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/ai-infra-mod hook antigravity post-write-edit",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/ai-infra-mod hook antigravity post-subagent",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "./bin/ai-infra-mod hook antigravity stop",
+        "timeout": 12
+      }
+    ]
+  }
+}

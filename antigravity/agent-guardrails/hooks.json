@@ -1,0 +1,58 @@
+{
+  "agent-guardrails-guards": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/guardrails hook antigravity bash-guard",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "write_to_file|write_file|replace_file_content|edit_file|multi_replace_file_content|notebook_edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/guardrails hook antigravity naming-check",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/guardrails hook antigravity subagent-gate",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "run_command|write_to_file|write_file|replace_file_content|edit_file|multi_replace_file_content|notebook_edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/guardrails hook antigravity edit-loop",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/guardrails hook antigravity subagent-release",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

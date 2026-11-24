@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "system-orchestration": {
+      "command": "./bin/orch-engine",
+      "args": [
+        "mcp"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

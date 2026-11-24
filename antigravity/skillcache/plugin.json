@@ -1,0 +1,19 @@
+{
+  "name": "skillcache",
+  "displayName": "SkillCache",
+  "version": "0.1.0",
+  "description": "Standalone SkillCache compiler, sandbox gate verifier (Gate 1/2/3), warm capsule executor, and stdio MCP server.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Check SkillCache sandbox readiness and active capsules for this repository",
+    "Run static Gate 1 validation on a capsule package directory",
+    "Compile or requalify a SkillCache capsule for this repository"
+  ],
+  "author": {
+    "name": "Alex-Caepio",
+    "url": "https://github.com/Alex-Caepio/skillcache"
+  },
+  "homepage": "https://github.com/Alex-Caepio/skillcache",
+  "repository": "https://github.com/Alex-Caepio/skillcache",
+  "disabled": true
+}

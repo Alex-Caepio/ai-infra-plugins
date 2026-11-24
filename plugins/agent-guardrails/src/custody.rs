@@ -81,9 +81,21 @@ pub fn absolute_lexical(path: &Path) -> Result<PathBuf> {
 
 /// Return true when `path` is a packaged plugin or plugin-cache directory.
 pub fn is_plugin_dir(path: &Path) -> bool {
+    if (path.join(".codex-plugin/plugin.json").is_file()
+        || path.join(".claude-plugin/plugin.json").is_file()
+        || path.join(".antigravity-plugin/plugin.json").is_file()
+        || path.join(".gemini-plugin/plugin.json").is_file()
+        || path.join("plugin.json").is_file()
+        || path.join(".mcp.json").is_file()
+        || path.join("mcp_config.json").is_file())
+        && path.join("bin/guardrails").is_file()
+    {
+        return true;
+    }
     if path.join(".codex-plugin/plugin.json").is_file()
         || path.join(".claude-plugin/plugin.json").is_file()
-        || (path.join(".mcp.json").is_file() && path.join("bin/guardrails").is_file())
+        || path.join(".antigravity-plugin/plugin.json").is_file()
+        || path.join(".gemini-plugin/plugin.json").is_file()
     {
         return true;
     }
@@ -92,6 +104,8 @@ pub fn is_plugin_dir(path: &Path) -> bool {
         || normalized.contains(".codex/plugins/cache/")
         || normalized.ends_with(".claude/plugins/cache")
         || normalized.contains(".claude/plugins/cache/")
+        || normalized.ends_with(".gemini/config/plugins")
+        || normalized.contains(".gemini/config/plugins/")
 }
 
 /// Return true when `start` lies inside a packaged plugin directory (before reaching `.git`).

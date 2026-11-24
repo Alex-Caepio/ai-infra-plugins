@@ -1,0 +1,19 @@
+{
+  "name": "agent-guardrails",
+  "displayName": "Agent Guardrails",
+  "version": "0.1.0",
+  "description": "Portable POSIX AST shell safety guard, $TMPDIR command/edit loop breakers, repository file-naming checks, and advisory subagent write-lock gates.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Initialize .agent-guardrails/policy.json with the preset matching this repository",
+    "Check whether a shell command is safe under active guardrails policy",
+    "Inspect active guardrails rules, naming policy, and session loop counters"
+  ],
+  "author": {
+    "name": "Alex-Caepio",
+    "url": "https://github.com/Alex-Caepio/agent-guardrails"
+  },
+  "homepage": "https://github.com/Alex-Caepio/agent-guardrails",
+  "repository": "https://github.com/Alex-Caepio/agent-guardrails",
+  "disabled": true
+}

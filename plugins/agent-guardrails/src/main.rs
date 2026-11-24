@@ -355,7 +355,7 @@ fn cmd_hook(args: &[String]) -> Result<u8> {
         [h, r] => (Some(h.clone()), r.as_str()),
         _ => {
             return Err(GuardError::invalid(
-                "Usage: guardrails hook [claude|codex|cursor] <bash-guard|edit-loop|naming-check|subagent-gate|subagent-release>",
+                "Usage: guardrails hook [antigravity|agy|claude|codex|cursor] <bash-guard|edit-loop|naming-check|subagent-gate|subagent-release>",
             ));
         }
     };
